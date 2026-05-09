@@ -17,7 +17,7 @@ system_instruction = """أنت روبوت ذكي، لطيف، ومرح جداً 
 لا تستخدم الرموز التعبيرية (الإيموجي) لأنك ستقوم بنطق الرد صوتياً."""
 
 model = genai.GenerativeModel(
-    model_name='gemini-1.5-flash',
+    model_name='gemini-1.5-flash-latest',
     system_instruction=system_instruction
 )
 
