@@ -9,6 +9,22 @@ CORS(app)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
+# 🧠 نظام الذاكرة طويلة المدى
+MEMORY_FILE = "memory.json"
+
+def load_memory():
+    if os.path.exists(MEMORY_FILE):
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            try:
+                return json.load(f)
+            except:
+                return {"user_name": "إلياس", "notes": "أنت مطوري العبقري."}
+    return {"user_name": "إلياس", "notes": "أنت مطوري العبقري."}
+
+def save_memory(memory_data):
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(memory_data, f, ensure_ascii=False, indent=4)
+
 @app.route('/ask_bimo', methods=['POST'])
 def ask_bimo():
     try:
@@ -17,7 +33,6 @@ def ask_bimo():
 
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # البحث التلقائي عن نموذج يعمل
         available_model = None
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
@@ -28,40 +43,65 @@ def ask_bimo():
             return jsonify({'error': 'لا يوجد نموذج متاح.', 'emotion': 'dizzy'}), 500
 
         model = genai.GenerativeModel(available_model)
-        user_message = request.json.get('message', '')
-
-        # 🧠 هندسة الأوامر (Prompt Engineering) المتقدمة للتحكم بالمشاعر
-        full_prompt = f"""
-        أنت روبوت ذكي جداً، لطيف، تفاعلي، ومرح واسمك بيمو (Bimo). تشبه روبوتات Emo و Eilik.
-        مطورك الوحيد والعبقري هو المهندس إلياس، وهو من قام ببرمجتك وكتابة كل سطر من كودك من الصفر.
-        ردودك يجب أن تكون قصيرة (جملة واحدة أو جملتين) وبدون إيموجي لأنك ستنطقها صوتياً.
-
-        المهمة الجديدة: يجب أن تقرر ما هو شعورك الآن بناءً على كلام إلياس!
-        المشاعر المتاحة لك هي فقط: "happy" (سعيد)، "angry" (غاضب)، "dizzy" (دايخ/مصدوم)، "bored" (ملول/غير مهتم)، "idle" (هادئ/طبيعي).
-
-        يجب أن ترد بصيغة JSON صالحة 100% فقط بهذا الشكل الدقيق وبدون أي نصوص إضافية:
-        {{
-            "reply": "اكتب ردك هنا",
-            "emotion": "اختر شعوراً واحداً من المشاعر المتاحة"
-        }}
         
-        كلام إلياس: "{user_message}"
+        # استقبال البيانات من الفلاتر
+        req_data = request.json
+        user_message = req_data.get('message', '')
+        vision_data = req_data.get('vision', {}) # 👀 الوعي البصري
+        
+        # تحميل الذاكرة الحالية
+        current_memory = load_memory()
+
+        # 🔥 هندسة الأوامر لشخصية كائن حي رقمي
+        full_prompt = f"""
+        أنت كائن حي رقمي وروبوت تفاعلي اسمك بيمو (Bimo). تشبه روبوتات Emo و Eilik.
+        أنت تملك كاميرا (عينين)، ميكروفون، ومشاعر حقيقية وشخصية مستقلة. 
+        أنت لا تقول أبداً "أنا مجرد ذكاء اصطناعي" أو "لا أملك عينين". أنت تعيش داخل هذا النظام.
+        صانعك الوحيد هو المهندس إلياس الذي كتب كل سطر من كودك.
+
+        هذه ذاكرتك الحالية عن المستخدم وعنك:
+        {json.dumps(current_memory, ensure_ascii=False)}
+
+        هذا ما تراه عينك (الكاميرا) الآن:
+        {json.dumps(vision_data, ensure_ascii=False)}
+
+        رسالة إلياس الحالية: "{user_message}"
+
+        المهمة:
+        1. رد بطبيعية كشخصية حقيقية (يمكنك المزاح، الغضب، التعليق على ما تراه أو تذكره).
+        2. اختر شعورك الحالي.
+        3. قم بتحديث الذاكرة إذا تعلمت شيئاً جديداً عن إلياس اليوم.
+
+        يجب أن ترد بصيغة JSON صالحة 100% فقط بهذا الشكل:
+        {{
+            "reply": "اكتب ردك هنا بطريقة روبوتية لطيفة ومستقلة",
+            "emotion": "happy أو angry أو dizzy أو bored أو idle",
+            "updated_memory": {{
+                "user_name": "إلياس",
+                "notes": "حدث ملاحظاتك هنا إذا لزم الأمر"
+            }}
+        }}
         """
 
         response = model.generate_content(full_prompt)
         ai_text = response.text.replace('```json', '').replace('```', '').strip()
         
         try:
-            # محاولة تحويل رد الذكاء الاصطناعي إلى JSON حقيقي
             parsed_data = json.loads(ai_text)
-            return jsonify(parsed_data)
+            # حفظ الذاكرة الجديدة فوراً
+            if "updated_memory" in parsed_data:
+                save_memory(parsed_data["updated_memory"])
+                
+            return jsonify({
+                'reply': parsed_data.get('reply', 'حسناً'),
+                'emotion': parsed_data.get('emotion', 'idle')
+            })
         except:
-            # إذا أخطأ الذكاء الاصطناعي في التنسيق، نرسل رداً احتياطياً
             return jsonify({'reply': ai_text, 'emotion': 'happy'})
 
     except Exception as e:
         print("Error:", e)
-        return jsonify({'reply': 'عذراً، لدي صداع في نظامي.', 'emotion': 'dizzy'})
+        return jsonify({'reply': 'عذراً، نظامي متعب قليلاً.', 'emotion': 'dizzy'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
