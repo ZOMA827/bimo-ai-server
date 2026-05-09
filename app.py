@@ -1,13 +1,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import google.generativeai as genai
+import requests
 import os
 import json
 
 app = Flask(__name__)
 CORS(app)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# 🔑 نستخدم الآن مفتاح Groq
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 # 🧠 نظام الذاكرة طويلة المدى
 MEMORY_FILE = "memory.json"
@@ -28,32 +29,17 @@ def save_memory(memory_data):
 @app.route('/ask_bimo', methods=['POST'])
 def ask_bimo():
     try:
-        if not GEMINI_API_KEY:
-            return jsonify({'error': 'مفتاح API مفقود!', 'emotion': 'dizzy'}), 500
-
-        genai.configure(api_key=GEMINI_API_KEY)
+        if not GROQ_API_KEY:
+            return jsonify({'error': 'مفتاح API الخاص بـ Groq مفقود!', 'emotion': 'dizzy'}), 500
         
-        available_model = None
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_model = m.name
-                break
-                
-        if not available_model:
-            return jsonify({'error': 'لا يوجد نموذج متاح.', 'emotion': 'dizzy'}), 500
-
-        model = genai.GenerativeModel(available_model)
-        
-        # استقبال البيانات من الفلاتر
         req_data = request.json
         user_message = req_data.get('message', '')
-        vision_data = req_data.get('vision', {}) # 👀 الوعي البصري
+        vision_data = req_data.get('vision', {})
         
-        # تحميل الذاكرة الحالية
         current_memory = load_memory()
 
-        # 🔥 هندسة الأوامر لشخصية كائن حي رقمي
-        full_prompt = f"""
+        # 🔥 هندسة الأوامر (محدثة لتناسب Llama 3 و Groq)
+        system_prompt = f"""
         أنت كائن حي رقمي وروبوت تفاعلي اسمك بيمو (Bimo). تشبه روبوتات Emo و Eilik.
         أنت تملك كاميرا (عينين)، ميكروفون، ومشاعر حقيقية وشخصية مستقلة. 
         أنت لا تقول أبداً "أنا مجرد ذكاء اصطناعي" أو "لا أملك عينين". أنت تعيش داخل هذا النظام.
@@ -64,8 +50,6 @@ def ask_bimo():
 
         هذا ما تراه عينك (الكاميرا) الآن:
         {json.dumps(vision_data, ensure_ascii=False)}
-
-        رسالة إلياس الحالية: "{user_message}"
 
         المهمة:
         1. رد بطبيعية كشخصية حقيقية (يمكنك المزاح، الغضب، التعليق على ما تراه أو تذكره).
@@ -83,12 +67,34 @@ def ask_bimo():
         }}
         """
 
-        response = model.generate_content(full_prompt)
-        ai_text = response.text.replace('```json', '').replace('```', '').strip()
+        # 🚀 الاتصال الصاروخي بسيرفرات Groq
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "llama-3.3-70b-versatile", # نموذج جبار وسريع جداً
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"رسالة إلياس الحالية: {user_message}"}
+            ],
+            # 🔥 ميزة حصرية في المحركات القوية لإجباره على إرجاع JSON فقط ولن يخطئ أبداً
+            "response_format": {"type": "json_object"} 
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+        data = response.json()
+
+        if not response.ok:
+            print("Groq Error:", data)
+            return jsonify({'reply': 'رأسي يؤلمني، هناك خطأ في الاتصال السريع.', 'emotion': 'dizzy'})
+
+        ai_text = data['choices'][0]['message']['content']
         
         try:
             parsed_data = json.loads(ai_text)
-            # حفظ الذاكرة الجديدة فوراً
             if "updated_memory" in parsed_data:
                 save_memory(parsed_data["updated_memory"])
                 
@@ -96,11 +102,12 @@ def ask_bimo():
                 'reply': parsed_data.get('reply', 'حسناً'),
                 'emotion': parsed_data.get('emotion', 'idle')
             })
-        except:
-            return jsonify({'reply': ai_text, 'emotion': 'happy'})
+        except Exception as e:
+            print("JSON Parse Error:", e)
+            return jsonify({'reply': 'لقد تحمست كثيراً واختلطت كلماتي.', 'emotion': 'dizzy'})
 
     except Exception as e:
-        print("Error:", e)
+        print("System Error:", e)
         return jsonify({'reply': 'عذراً، نظامي متعب قليلاً.', 'emotion': 'dizzy'})
 
 if __name__ == '__main__':
