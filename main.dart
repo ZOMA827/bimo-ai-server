@@ -16,11 +16,11 @@ void main() async {
   );
 }
 
-enum BimoState { idle, happy, angry, listening, dizzy, bored }
+// 😭 تمت إضافة حالة الحزن (sad)
+enum BimoState { idle, happy, angry, sad, listening, dizzy, bored }
 
 class BimoProFace extends StatefulWidget {
   const BimoProFace({super.key});
-
   @override
   State<BimoProFace> createState() => _BimoProFaceState();
 }
@@ -29,7 +29,7 @@ class _BimoProFaceState extends State<BimoProFace>
     with TickerProviderStateMixin {
   late AnimationController _breathingController;
   late Animation<double> _breathingAnimation;
-  bool _isUserSmiling = false; // 👀 متغير الوعي البصري
+  bool _isUserSmiling = false;
   bool _isBlinking = false;
   BimoState _currentState = BimoState.idle;
 
@@ -39,11 +39,12 @@ class _BimoProFaceState extends State<BimoProFace>
   Timer? _idleTimer;
 
   final Random _random = Random();
-
   final SpeechToText _speechToText = SpeechToText();
   final FlutterTts _flutterTts = FlutterTts();
+
+  // 🎤 متغيرات نظام الاستماع الدائم
   bool _speechEnabled = false;
-  String _lastWords = "";
+  bool _isSpeaking = false; // لمنع بيمو من الاستماع لنفسه وهو يتحدث
 
   CameraController? _cameraController;
   FaceDetector? _faceDetector;
@@ -85,27 +86,24 @@ class _BimoProFaceState extends State<BimoProFace>
     _startIdleWatcher();
   }
 
+  // ... (نفس دوال الكاميرا والرؤية كما هي) ...
   Future<void> _initVision() async {
     _cameras = await availableCameras();
     final frontCamera = _cameras?.firstWhere(
       (camera) => camera.lensDirection == CameraLensDirection.front,
       orElse: () => _cameras!.first,
     );
-
     if (frontCamera != null) {
       _cameraController = CameraController(
         frontCamera,
         ResolutionPreset.low,
         enableAudio: false,
       );
-
       await _cameraController?.initialize();
-      // إعداد كاشف الوجوه
       _faceDetector = FaceDetector(
         options: FaceDetectorOptions(
           enableTracking: true,
-          enableClassification:
-              true, // 🔥 هذا السطر الجديد ليعرف إذا كنت تبتسم!
+          enableClassification: true,
           performanceMode: FaceDetectorMode.fast,
         ),
       );
@@ -116,12 +114,10 @@ class _BimoProFaceState extends State<BimoProFace>
   void _processCameraImage(CameraImage image) async {
     if (_isDetecting || _faceDetector == null) return;
     _isDetecting = true;
-
     try {
       final WriteBuffer allBytes = WriteBuffer();
-      for (final Plane plane in image.planes) {
+      for (final Plane plane in image.planes)
         allBytes.putUint8List(plane.bytes);
-      }
       final bytes = allBytes.done().buffer.asUint8List();
       final Size imageSize = Size(
         image.width.toDouble(),
@@ -133,24 +129,18 @@ class _BimoProFaceState extends State<BimoProFace>
         format: InputImageFormat.nv21,
         bytesPerRow: image.planes[0].bytesPerRow,
       );
-      final inputImage = InputImage.fromBytes(bytes: bytes, metadata: metadata);
-      final faces = await _faceDetector!.processImage(inputImage);
+      final faces = await _faceDetector!.processImage(
+        InputImage.fromBytes(bytes: bytes, metadata: metadata),
+      );
 
       if (faces.isNotEmpty && mounted && _currentState == BimoState.idle) {
         final face = faces.first;
-
-        // 👀 استخراج الوعي البصري (هل إلياس يبتسم؟)
-        if (face.smilingProbability != null) {
+        if (face.smilingProbability != null)
           _isUserSmiling = face.smilingProbability! > 0.6;
-        }
-
         final centerX = face.boundingBox.center.dx;
-        // ... باقي الكود كما هو
-
         final centerY = face.boundingBox.center.dy;
         final dx = -((centerX / imageSize.width) - 0.5) * 120;
         final dy = ((centerY / imageSize.height) - 0.5) * 80;
-
         setState(() {
           _lookTarget = Offset(dx, dy);
           _faceOffset = Offset(dx * 0.6, dy * 0.6);
@@ -158,7 +148,7 @@ class _BimoProFaceState extends State<BimoProFace>
         _resetIdleTimer();
       }
     } catch (e) {
-      debugPrint("خطأ في الرؤية: $e");
+      debugPrint("Vision Error: $e");
     } finally {
       _isDetecting = false;
     }
@@ -199,36 +189,14 @@ class _BimoProFaceState extends State<BimoProFace>
     _roamingTimer?.cancel();
     _roamingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (_currentState == BimoState.idle) {
-        setState(() {
-          _faceOffset = Offset(
+        setState(
+          () => _faceOffset = Offset(
             _random.nextDouble() * 20 - 10,
             _random.nextDouble() * 20 - 10,
-          );
-        });
+          ),
+        );
       }
     });
-  }
-
-  @override
-  void dispose() {
-    _breathingController.dispose();
-    _moodTimer?.cancel();
-    _roamingTimer?.cancel();
-    _shakeTimer?.cancel();
-    _idleTimer?.cancel();
-    _cameraController?.dispose();
-    _faceDetector?.close();
-    super.dispose();
-  }
-
-  void _trackTouch(Offset localPos, Size screenSize) {
-    final dx = ((localPos.dx - screenSize.width / 2) / screenSize.width) * 120;
-    final dy = ((localPos.dy - screenSize.height / 2) / screenSize.height) * 80;
-    setState(() {
-      _lookTarget = Offset(dx, dy);
-      _faceOffset = Offset(dx * 0.6, dy * 0.6);
-    });
-    _resetIdleTimer();
   }
 
   void _setMood(BimoState newState, {int durationSeconds = 4}) {
@@ -236,13 +204,11 @@ class _BimoProFaceState extends State<BimoProFace>
       _currentState = newState;
       _shakeOffset = 0;
       _headRotation = 0;
-
       if (newState == BimoState.listening) {
         _faceOffset = const Offset(50, 0);
         Future.delayed(const Duration(milliseconds: 500), () {
-          if (_currentState == BimoState.listening) {
+          if (_currentState == BimoState.listening)
             setState(() => _faceOffset = const Offset(-50, 0));
-          }
         });
       } else {
         _faceOffset = Offset.zero;
@@ -260,41 +226,25 @@ class _BimoProFaceState extends State<BimoProFace>
     _resetIdleTimer();
   }
 
-  void _startDizzy() {
-    if (_currentState == BimoState.dizzy) return;
-    setState(() => _currentState = BimoState.dizzy);
+  @override
+  void dispose() {
+    _breathingController.dispose();
+    _moodTimer?.cancel();
+    _roamingTimer?.cancel();
     _shakeTimer?.cancel();
-    _shakeTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-      setState(() {
-        _shakeOffset = _shakeOffset == 15 ? -15 : 15;
-        _faceOffset = Offset(_shakeOffset, _random.nextDouble() * 10 - 5);
-      });
-    });
-    _resetIdleTimer();
-  }
-
-  void _stopDizzy() {
-    _shakeTimer?.cancel();
-    _setMood(BimoState.angry);
+    _idleTimer?.cancel();
+    _cameraController?.dispose();
+    _faceDetector?.close();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
-        onTapDown: (details) {
-          _trackTouch(details.localPosition, screenSize);
-          _startListening();
-        },
-        onLongPress: () => _setMood(BimoState.happy),
-        onDoubleTap: () => _setMood(BimoState.angry),
-        onPanUpdate: (details) {
-          _trackTouch(details.localPosition, screenSize);
-          _startDizzy();
-        },
-        onPanEnd: (details) => _stopDizzy(),
+        // لم نعد بحاجة للنقر للاستماع، لكن سنتركه كخيار إضافي
+        onTapDown: (details) => _startListening(),
         child: Container(
           color: Colors.transparent,
           child: Center(
@@ -385,6 +335,18 @@ class _BimoProFaceState extends State<BimoProFace>
         );
         eyeColor = Colors.redAccent;
         break;
+      // 😭 شكل العيون الحزينة (تبكي)
+      case BimoState.sad:
+        height = 50;
+        width = 70;
+        borderRadius = const BorderRadius.only(
+          topLeft: Radius.circular(40),
+          topRight: Radius.circular(40),
+          bottomLeft: Radius.circular(10),
+          bottomRight: Radius.circular(10),
+        );
+        eyeColor = Colors.lightBlueAccent;
+        break;
       case BimoState.listening:
         width = 90;
         height = 110;
@@ -465,6 +427,17 @@ class _BimoProFaceState extends State<BimoProFace>
       width = 70;
       height = 6;
       mouthColor = Colors.redAccent;
+    } else if (_currentState == BimoState.sad) {
+      // 😭 شكل الفم الحزين
+      width = 40;
+      height = 15;
+      mouthRadius = const BorderRadius.only(
+        topLeft: Radius.circular(30),
+        topRight: Radius.circular(30),
+        bottomLeft: Radius.circular(5),
+        bottomRight: Radius.circular(5),
+      );
+      mouthColor = Colors.lightBlueAccent;
     } else if (_currentState == BimoState.listening ||
         _currentState == BimoState.dizzy ||
         _currentState == BimoState.bored) {
@@ -493,84 +466,89 @@ class _BimoProFaceState extends State<BimoProFace>
     );
   }
 
+  // 🎤 تهيئة نظام الاستماع الدائم
   void _initVoice() async {
-    _speechEnabled = await _speechToText.initialize();
+    _speechEnabled = await _speechToText.initialize(
+      onStatus: (status) {
+        // إذا توقف عن الاستماع وكان لا يتحدث، أعد تشغيل الميكروفون بصمت
+        if (status == 'notListening' && !_isSpeaking) {
+          _startListening();
+        }
+      },
+    );
     await _flutterTts.setLanguage("ar-SA");
     await _flutterTts.setPitch(1.5);
-    setState(() {});
+
+    // تشغيل الميكروفون لأول مرة
+    if (_speechEnabled) _startListening();
   }
 
   Future _speak(String text) async {
+    _isSpeaking = true; // نمنعه من الاستماع لنفسه
     await _flutterTts.speak(text);
+    _isSpeaking = false;
+    _startListening(); // نعود للاستماع بعد انتهاء الكلام
   }
 
-  // 🚀 التحديث الأسطوري: إجبار الاستماع باللغة العربية بحساسية عالية
+  // 👂 الاستماع المستمر (ينتظر كلمة "بيمو")
   void _startListening() async {
-    _flutterTts.stop(); // إيقاف كلام بيمو إذا أردت مقاطعته
-    _setMood(BimoState.listening);
+    if (!_speechEnabled || _isSpeaking) return;
 
     await _speechToText.listen(
       onResult: (result) {
-        setState(() {
-          _lastWords = result.recognizedWords;
-          // ننتظر حتى يتأكد النظام أنك أنهيت الجملة
-          if (result.finalResult && _lastWords.isNotEmpty) {
-            _processCommand(_lastWords);
+        if (result.finalResult) {
+          String words = result.recognizedWords.toLowerCase();
+
+          // 👀 هل نادى اسمي؟ (نظام EMO)
+          if (words.contains("بيمو")) {
+            _processCommand(words);
           }
-        });
+        }
       },
-      localeId: "ar-SA", // السر هنا: إجباره على فهم العربية بوضوح
+      localeId: "ar-SA",
       cancelOnError: true,
-      listenMode: ListenMode.confirmation,
+      listenMode: ListenMode.dictation, // وضع الإملاء يجعله يستمع لفترة أطول
     );
   }
 
-  // 🧠 التحديث الأسطوري 2: ربط العقل بالمشاعر والوعي البصري!
+  // 🧠 إرسال الأوامر للعقل
   Future<void> _processCommand(String command) async {
     _setMood(BimoState.listening);
 
     try {
       final String serverUrl = 'https://bimo-robot-brain.onrender.com/ask_bimo';
 
-      // 👀 1. تجهيز بيانات الرؤية لإرسالها للعقل
       final visionContext = {
-        'is_user_smiling':
-            _isUserSmiling, // المتغير الذي يحدد هل أنت تبتسم أم لا
+        'is_user_smiling': _isUserSmiling,
         'user_distance': 'close',
       };
 
       final response = await http.post(
         Uri.parse(serverUrl),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
-        // 🔥 2. هنا التغيير الأهم: نرسل الرسالة + الرؤية معاً
         body: jsonEncode({'message': command, 'vision': visionContext}),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
 
-        // استخراج الكلام
         final reply = data['reply'] ?? "حسناً";
-        // استخراج الشعور الذي قرره الذكاء الاصطناعي
         final String aiEmotion = data['emotion'] ?? "idle";
 
-        // تحويل النص القادم من البايثون إلى حالة بيمو الفعلية
+        // 🔥 استقبال كل المشاعر بما فيها الحزن
         BimoState nextMood = BimoState.idle;
-        if (aiEmotion == 'happy') {
+        if (aiEmotion == 'happy')
           nextMood = BimoState.happy;
-        } else if (aiEmotion == 'angry') {
+        else if (aiEmotion == 'angry')
           nextMood = BimoState.angry;
-        } else if (aiEmotion == 'dizzy') {
+        else if (aiEmotion == 'sad')
+          nextMood = BimoState.sad; // الشعور الجديد
+        else if (aiEmotion == 'dizzy')
           nextMood = BimoState.dizzy;
-        } else if (aiEmotion == 'bored') {
+        else if (aiEmotion == 'bored')
           nextMood = BimoState.bored;
-        }
 
-        _setMood(
-          nextMood,
-          durationSeconds: 6,
-        ); // يبقى على هذا الشعور لـ 6 ثوانٍ
-
+        _setMood(nextMood, durationSeconds: 6);
         _speak(reply);
       } else {
         _speak("عذراً، السيرفر فيه خلل بسيط.");
@@ -578,7 +556,7 @@ class _BimoProFaceState extends State<BimoProFace>
       }
     } catch (e) {
       debugPrint("Network Error: $e");
-      _speak("لم أتمكن من الاتصال بالإنترنت يا مهندسي العزيز.");
+      _speak("لم أتمكن من الاتصال بالإنترنت.");
       _setMood(BimoState.dizzy);
     }
   }
