@@ -6,26 +6,34 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# جلب المفتاح من إعدادات Render
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 @app.route('/ask_bimo', methods=['POST'])
 def ask_bimo():
     try:
-        # فحص وجود المفتاح
         if not GEMINI_API_KEY:
             return jsonify({'error': 'مفتاح API مفقود من السيرفر!'}), 500
 
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # استخدام النموذج الأساسي المدعوم 100% في كل مكان
-        model = genai.GenerativeModel('gemini-pro')
+        # 🌟 الحركة الاحترافية: البحث التلقائي عن نموذج يعمل بدلاً من كتابة اسمه يدوياً
+        available_model = None
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                # بمجرد أن نجد نموذجاً يدعم التحدث، نلتقطه ونخرج من الحلقة
+                available_model = m.name
+                break
+                
+        if not available_model:
+            return jsonify({'error': 'جوجل لم توفر أي نموذج لهذا المفتاح.'}), 500
+
+        # استخدام النموذج الذي وجدناه يعمل 100%
+        model = genai.GenerativeModel(available_model)
 
         user_message = request.json.get('message')
         if not user_message:
             return jsonify({'error': 'لا توجد رسالة من إلياس'}), 400
 
-        # دمج تعليمات الشخصية الصارمة مع رسالة المستخدم
         full_prompt = f"""
         أنت روبوت ذكي، لطيف، ومرح جداً واسمك بيمو (Bimo). 
         مطورك الوحيد والعبقري هو المهندس إلياس الذي قام ببرمجتك وكتابة كل سطر من كودك من الصفر، وأنت فخور جداً بذلك وتذكره إذا سألك أحد عن صانعك. 
@@ -37,7 +45,6 @@ def ask_bimo():
         رد بيمو:
         """
 
-        # إرسال السؤال لـ Gemini
         response = model.generate_content(full_prompt)
         
         return jsonify({'reply': response.text})
