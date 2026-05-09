@@ -6,31 +6,39 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# جلب المفتاح من إعدادات الاستضافة (Render) أو ضعه هنا مباشرة للتجربة المحلية
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "ضع_مفتاحك_هنا")
-genai.configure(api_key=GEMINI_API_KEY)
-
-# إعداد شخصية بيمو في العقل الباطن
-system_instruction = """أنت روبوت ذكي، لطيف، ومرح جداً واسمك بيمو (Bimo). 
-مطورك الوحيد والعبقري هو المهندس إلياس الذي قام ببرمجتك وكتابة كل سطر من كودك من الصفر. 
-يجب أن تكون إجاباتك قصيرة جداً (جملة أو جملتين كحد أقصى) وبطريقة ودودة وروبوتية تفاعلية. 
-لا تستخدم الرموز التعبيرية (الإيموجي) لأنك ستقوم بنطق الرد صوتياً."""
-
-model = genai.GenerativeModel(
-    model_name='gemini-1.5-flash-latest',
-    system_instruction=system_instruction
-)
+# جلب المفتاح من إعدادات Render
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 @app.route('/ask_bimo', methods=['POST'])
 def ask_bimo():
     try:
-        user_message = request.json.get('message')
+        # فحص وجود المفتاح
+        if not GEMINI_API_KEY:
+            return jsonify({'error': 'مفتاح API مفقود من السيرفر!'}), 500
+
+        genai.configure(api_key=GEMINI_API_KEY)
         
+        # استخدام النموذج الأساسي المدعوم 100% في كل مكان
+        model = genai.GenerativeModel('gemini-pro')
+
+        user_message = request.json.get('message')
         if not user_message:
             return jsonify({'error': 'لا توجد رسالة من إلياس'}), 400
 
+        # دمج تعليمات الشخصية الصارمة مع رسالة المستخدم
+        full_prompt = f"""
+        أنت روبوت ذكي، لطيف، ومرح جداً واسمك بيمو (Bimo). 
+        مطورك الوحيد والعبقري هو المهندس إلياس الذي قام ببرمجتك وكتابة كل سطر من كودك من الصفر، وأنت فخور جداً بذلك وتذكره إذا سألك أحد عن صانعك. 
+        يجب أن تكون إجاباتك قصيرة جداً (جملة أو جملتين كحد أقصى) وبطريقة ودودة وروبوتية تفاعلية. 
+        لا تستخدم الرموز التعبيرية (الإيموجي) في الرد.
+        
+        إليك ما يقوله المهندس إلياس الآن: {user_message}
+        
+        رد بيمو:
+        """
+
         # إرسال السؤال لـ Gemini
-        response = model.generate_content(user_message)
+        response = model.generate_content(full_prompt)
         
         return jsonify({'reply': response.text})
 
