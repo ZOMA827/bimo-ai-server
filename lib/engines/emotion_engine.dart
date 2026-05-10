@@ -15,7 +15,8 @@ enum FaceAction {
   spin,
   cry,
   laugh,
-}
+  sing,
+} // 🔥 أضفنا sing
 
 class EmotionEngine {
   BimoState _currentState = BimoState.sleeping;
@@ -99,6 +100,8 @@ class EmotionEngine {
         return FaceAction.cry;
       case 'laugh':
         return FaceAction.laugh;
+      case 'sing': // 🔥 أضف هذا
+        return FaceAction.sing; // 🔥 أضف هذا
       default:
         return FaceAction.none;
     }
@@ -122,6 +125,8 @@ class EmotionEngine {
         return const Duration(seconds: 3);
       case FaceAction.laugh:
         return const Duration(milliseconds: 1200);
+      case FaceAction.sing:
+        return const Duration(seconds: 5);
       default:
         return Duration.zero;
     }

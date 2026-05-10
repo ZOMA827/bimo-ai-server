@@ -1,5 +1,5 @@
 // lib/main.dart — بيمو برو النهائي
-// ✅ لا كلام عشوائي | كاميرا Lazy | صوت ذكر | مبادرات ذكية
+// ✅ صوت ذكر محسّن | كاميرا Lazy | مبادرات ذكية | متعدد اللغات | تفاعل فيزيائي | تفاعل صوتي (غناء وتصفيق)
 
 import 'package:flutter/material.dart';
 import 'dart:async';
@@ -11,6 +11,8 @@ import 'senses/smart_mic.dart';
 import 'engines/emotion_engine.dart';
 import 'ui/bimo_face.dart';
 import 'ui/animations.dart';
+import 'senses/wake_word_engine.dart';
+import 'senses/physical_awareness.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,6 +50,8 @@ class _BimoProFaceState extends State<BimoProFace>
   final SmartMic _mic = SmartMic();
   final EmotionEngine _emotion = EmotionEngine();
   final FlutterTts _tts = FlutterTts();
+  final WakeWordEngine _wakeWord = WakeWordEngine();
+  final PhysicalAwareness _physical = PhysicalAwareness();
   final Random _rng = Random();
 
   late Animation<double> _breathing;
@@ -64,17 +68,18 @@ class _BimoProFaceState extends State<BimoProFace>
   Timer? _mouthTimer;
   Timer? _aloneTimer;
   Timer? _aloneRepeat;
-  Timer? _spontaneousPoller; // يسأل السيرفر عن مبادرات العقل الباطن
+  Timer? _spontaneousPoller;
 
   int _replysSinceNameUsed = 0;
 
+  // ─── كلمات تشغل الكاميرا ───────────────────
   static const _visionKeywords = [
     'شوف',
     'انظر',
     'نظر',
     'هنا',
     'ما هذا',
-    'ماذا البس',
+    'ماذا ألبس',
     'ملابس',
     'قميص',
     'لون',
@@ -86,28 +91,40 @@ class _BimoProFaceState extends State<BimoProFace>
     'ما أمامك',
     'ما تراه',
     'ما لون',
+    'كيف أبدو',
+    'ما الذي',
+    'انظر إليّ',
+    'شايفني',
+    'look',
+    'see',
+    'what is this',
+    'what do you see',
+    'what color',
+    'read this',
+    'describe',
   ];
 
-  // ─────────────────────────────────────────
-  // Busy
   // ─────────────────────────────────────────
   void _setBusy(bool v, {Duration? autoRelease}) {
     _busyTimeout?.cancel();
     _isBusy = v;
-    if (v && autoRelease != null)
+    if (v && autoRelease != null) {
       _busyTimeout = Timer(autoRelease, _releaseBusy);
+    }
     if (mounted) setState(() {});
   }
 
   void _releaseBusy() {
     _busyTimeout?.cancel();
     _isBusy = false;
-    _mic.resumeAfterSpeaking();
+
+    if (_emotion.isAwake) {
+      _mic.resumeAfterSpeaking();
+    }
+
     if (mounted) setState(() {});
   }
 
-  // ─────────────────────────────────────────
-  // Init
   // ─────────────────────────────────────────
   @override
   void initState() {
@@ -122,8 +139,39 @@ class _BimoProFaceState extends State<BimoProFace>
   void _initBimo() async {
     await _vision.initialize((face) {});
     await _setupTTS();
-    final micOk = await _mic.initialize(_handleSpeech);
-    if (micOk) _mic.startListening();
+
+    final wakeWordOk = await _wakeWord.initialize(_wakeUp);
+
+    // 🔥 تهيئة الميكروفون الذكي وإضافة ميزة الاستماع للتصفيق/الضجيج!
+    await _mic.initialize(
+      _handleSpeech,
+      onLoudNoise: () {
+        if (!_emotion.isAwake || _isBusy) return;
+        debugPrint('👏 صوت ضجيج أو تصفيق!');
+        _emotion.updateMood(BimoState.surprised, () => setState(() {}));
+        _emotion.executeFaceAction('spin', () => setState(() {}));
+      },
+    );
+
+    _physical.initialize(
+      onShake: () {
+        if (!_emotion.isAwake || _isBusy) return;
+        debugPrint('🌀 الهاتف يهتز! بيمو يشعر بالدوار');
+        _emotion.updateMood(BimoState.dizzy, () => setState(() {}));
+        _emotion.executeFaceAction('spin', () => setState(() {}));
+        _speak('آآآخ! راسي يدوور! توقف عن هزي يا بطل!');
+      },
+      onFaceDown: () {
+        if (_emotion.isAwake) {
+          debugPrint('📴 الهاتف مقلوب... بيمو يذهب للنوم لتوفير البطارية');
+          _goToSleep();
+        }
+      },
+    );
+
+    if (wakeWordOk) {
+      _wakeWord.startListening();
+    }
 
     _emotion.startAutoBlink(() {
       if (!mounted) return;
@@ -132,12 +180,13 @@ class _BimoProFaceState extends State<BimoProFace>
         if (mounted) setState(() => _isBlinking = false);
       });
     });
+
     _emotion.startRandomExpressions(() {
       if (mounted) setState(() {});
     });
+
     _emotion.updateMood(BimoState.sleeping, () => setState(() {}));
 
-    // بدء polling العقل الباطن — كل 30 ثانية
     _spontaneousPoller = Timer.periodic(
       const Duration(seconds: 30),
       (_) => _checkSpontaneous(),
@@ -145,55 +194,85 @@ class _BimoProFaceState extends State<BimoProFace>
   }
 
   // ─────────────────────────────────────────
-  // ✅ صوت ذكر — pitch = 0.85 (أقل من 1.0 = أعمق)
-  // ─────────────────────────────────────────
   Future<void> _setupTTS() async {
     await _tts.setLanguage("ar-SA");
-    await _tts.setPitch(0.85);
-    await _tts.setSpeechRate(0.47);
+    await _tts.setPitch(0.70);
+    await _tts.setSpeechRate(0.48);
     await _tts.setVolume(1.0);
+    await _tts.awaitSpeakCompletion(true);
 
-    final voices = await _tts.getVoices;
-    if (voices != null) {
-      final list = voices as List;
-      final male = list.firstWhere(
-        (v) =>
-            v['locale']?.toString().contains('ar') == true &&
-            (v['name']?.toString().toLowerCase().contains('male') == true ||
-                v['name']?.toString().toLowerCase().contains('tarik') == true ||
-                v['name']?.toString().toLowerCase().contains('hamdan') ==
-                    true ||
-                v['name']?.toString().toLowerCase().contains('omar') == true),
-        orElse: () => null,
-      );
-      final arab =
-          male ??
-          list.firstWhere(
-            (v) => v['locale']?.toString().contains('ar') == true,
-            orElse: () => null,
-          );
-      if (arab != null) {
-        await _tts.setVoice({'name': arab['name'], 'locale': arab['locale']});
-        debugPrint('🎤 صوت: ${arab['name']}');
+    try {
+      final voices = await _tts.getVoices;
+      if (voices != null) {
+        final List<Map<String, String>> voiceList = (voices as List).map((v) {
+          return Map<String, String>.from(v as Map);
+        }).toList();
+
+        Map<String, String>? bestVoice;
+
+        for (var v in voiceList) {
+          final name = v['name']?.toLowerCase() ?? '';
+          final locale = v['locale']?.toLowerCase() ?? '';
+          if (locale.contains('ar') &&
+              name.contains('network') &&
+              name.contains('male')) {
+            bestVoice = v;
+            break;
+          }
+        }
+
+        if (bestVoice == null) {
+          for (var v in voiceList) {
+            final name = v['name']?.toLowerCase() ?? '';
+            final locale = v['locale']?.toLowerCase() ?? '';
+            if (locale.contains('ar') &&
+                (name.contains('male') ||
+                    name.contains('tarik') ||
+                    name.contains('majed'))) {
+              bestVoice = v;
+              break;
+            }
+          }
+        }
+
+        if (bestVoice != null) {
+          await _tts.setVoice({
+            'name': bestVoice['name']!,
+            'locale': bestVoice['locale']!,
+          });
+          debugPrint('🎤 تم تفعيل الصوت الفخم: ${bestVoice['name']}');
+        } else {
+          debugPrint('🎤 تم تفعيل الصوت الافتراضي مع تضخيم النبرة');
+        }
       }
+    } catch (e) {
+      debugPrint('⚠️ خطأ في إعداد الصوت: $e');
     }
+
     _tts.setCompletionHandler(_releaseBusy);
     _tts.setCancelHandler(_releaseBusy);
     _tts.setErrorHandler((_) => _releaseBusy());
   }
 
   // ─────────────────────────────────────────
-  // ✅ معالجة الكلام — فقط لما يتكلم المستخدم فعلاً
-  // ─────────────────────────────────────────
   void _handleSpeech(String words) {
     if (words.isEmpty) return;
     final cmd = words.trim().toLowerCase();
     debugPrint('🎙 "$cmd"');
 
-    _cancelAlone(); // المستخدم عاد — ألغِ وحدة بيمو
+    _cancelAlone();
 
     if (!_emotion.isAwake) {
-      const wake = ['بيمو', 'ديمو', 'فيمو', 'مرحبا', 'اصحى', 'استيقظ', 'bimo'];
+      const wake = [
+        'بيمو',
+        'ديمو',
+        'فيمو',
+        'مرحبا',
+        'اصحى',
+        'استيقظ',
+        'bimo',
+        'hey bimo',
+      ];
       if (wake.any((w) => cmd.contains(w))) _wakeUp();
       return;
     }
@@ -202,7 +281,11 @@ class _BimoProFaceState extends State<BimoProFace>
     _resetAloneTimer();
 
     if (_isBusy) {
-      if (cmd.contains('اسكت') || cmd.contains('وقف') || cmd.contains('كفى')) {
+      if (cmd.contains('اسكت') ||
+          cmd.contains('وقف') ||
+          cmd.contains('كفى') ||
+          cmd.contains('stop') ||
+          cmd.contains('quiet')) {
         _tts.stop();
         _releaseBusy();
         _emotion.updateMood(BimoState.idle, () => setState(() {}));
@@ -217,6 +300,7 @@ class _BimoProFaceState extends State<BimoProFace>
       'مع السلامة',
       'bye',
       'sleep',
+      'good night',
     ];
     if (sleepCmds.any((kw) => cmd.contains(kw))) {
       _goToSleep();
@@ -232,21 +316,39 @@ class _BimoProFaceState extends State<BimoProFace>
     _resetAloneTimer();
     _tts.stop();
     _releaseBusy();
+
+    _wakeWord.stopListening();
+    _mic.startListening();
+
     _emotion.updateMood(BimoState.happy, () => setState(() {}));
     _vision.quickFaceScan((off) {
       if (mounted) setState(() => _faceOffset = off);
     });
-    const gs = ['نعم، أنا هنا!', 'صحيت! شو في؟', 'أيوه، تفضل.', 'هلا، قل.'];
+    const gs = [
+      'نعم، أنا هنا!',
+      'صحيت! شو في؟',
+      'أيوه، تفضل.',
+      'هلا، قل.',
+      'Yes! I\'m here!',
+    ];
     _speak(gs[_rng.nextInt(gs.length)]);
   }
 
-  void _goToSleep() {
+  void _goToSleep() async {
     _emotion.isAwake = false;
     _sleepTimer?.cancel();
     _cancelAlone();
     _api.clearHistory();
+
+    _mic.stopListening();
     _emotion.updateMood(BimoState.sleeping, () => setState(() {}));
-    _speak('تصبح على خير!');
+
+    await _speak('تصبح على خير!');
+    await Future.delayed(const Duration(milliseconds: 1500));
+
+    if (!_emotion.isAwake) {
+      _wakeWord.startListening();
+    }
   }
 
   void _resetSleepTimer() {
@@ -256,9 +358,6 @@ class _BimoProFaceState extends State<BimoProFace>
     });
   }
 
-  // ─────────────────────────────────────────
-  // ✅ السلوك الانفرادي — Flutter side
-  // (الذكاء الحقيقي في SubconsciousAgent بالسيرفر)
   // ─────────────────────────────────────────
   void _resetAloneTimer() {
     _aloneTimer?.cancel();
@@ -291,7 +390,6 @@ class _BimoProFaceState extends State<BimoProFace>
         _speak(calls[_rng.nextInt(calls.length)]);
         break;
       case 1:
-        // يلعب بوجهه بدون كلام
         const acts = ['wink', 'look_away', 'spin', 'nod_yes'];
         const states = [BimoState.happy, BimoState.excited, BimoState.shy];
         _emotion.updateMood(
@@ -320,7 +418,6 @@ class _BimoProFaceState extends State<BimoProFace>
         _speak(mono[_rng.nextInt(mono.length)]);
         break;
       case 3:
-        // "رقص"
         _emotion.updateMood(BimoState.excited, () => setState(() {}));
         _emotion.executeFaceAction('spin', () => setState(() {}));
         Timer(const Duration(milliseconds: 800), () {
@@ -342,8 +439,6 @@ class _BimoProFaceState extends State<BimoProFace>
   }
 
   // ─────────────────────────────────────────
-  // ✅ Polling العقل الباطن من السيرفر
-  // ─────────────────────────────────────────
   Future<void> _checkSpontaneous() async {
     if (!_emotion.isAwake || _isBusy || !mounted) return;
     final result = await _api.checkSpontaneous();
@@ -364,8 +459,6 @@ class _BimoProFaceState extends State<BimoProFace>
   }
 
   // ─────────────────────────────────────────
-  // استدعاء العقل
-  // ─────────────────────────────────────────
   Future<void> _callBrain(String message) async {
     _mic.pauseForSpeaking();
     _setBusy(true, autoRelease: const Duration(seconds: 30));
@@ -378,7 +471,6 @@ class _BimoProFaceState extends State<BimoProFace>
 
     if (needsVision) {
       debugPrint('📸 يفتح الكاميرا...');
-      // ✅ ابدأ بمسح الوجه أولاً (للتتبع)، ثم التقط الصورة
       await _vision.quickFaceScan((off) {
         if (mounted) setState(() => _faceOffset = off);
       });
@@ -430,7 +522,11 @@ class _BimoProFaceState extends State<BimoProFace>
     if (text.isEmpty) return;
     final dur = Duration(seconds: (text.length / 5).ceil() + 4);
     _setBusy(true, autoRelease: dur);
-    _mic.pauseForSpeaking();
+
+    if (_emotion.isAwake) {
+      _mic.pauseForSpeaking();
+    }
+
     _startMouthAnimation();
     await _tts.speak(text);
   }
@@ -438,6 +534,8 @@ class _BimoProFaceState extends State<BimoProFace>
   // ─────────────────────────────────────────
   @override
   void dispose() {
+    _wakeWord.dispose();
+    _physical.dispose();
     _vision.dispose();
     _sleepTimer?.cancel();
     _busyTimeout?.cancel();
@@ -449,6 +547,56 @@ class _BimoProFaceState extends State<BimoProFace>
     _mic.dispose();
     _tts.stop();
     super.dispose();
+  }
+
+  // 🔥 دالة تصميم الميكروفون واليدين عند الغناء
+  Widget _buildSingingMic() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: AnimatedBuilder(
+        animation: _pulseAnim,
+        builder: (context, child) {
+          // حركة اهتزاز (رقص) خفيفة مع الموسيقى
+          final danceOffset = (_pulseAnim.value - 1.0) * 80;
+          return Transform.translate(
+            offset: Offset(0, -danceOffset),
+            child: child,
+          );
+        },
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // اليد اليسرى
+            Container(
+              width: 25,
+              height: 25,
+              decoration: const BoxDecoration(
+                color: Colors.cyanAccent,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 5),
+            // الميكروفون
+            const Icon(
+              Icons.mic_external_on,
+              color: Colors.white,
+              size: 55,
+              shadows: [Shadow(color: Colors.cyan, blurRadius: 15)],
+            ),
+            const SizedBox(width: 5),
+            // اليد اليمنى
+            Container(
+              width: 25,
+              height: 25,
+              decoration: const BoxDecoration(
+                color: Colors.cyanAccent,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ─────────────────────────────────────────
@@ -548,6 +696,10 @@ class _BimoProFaceState extends State<BimoProFace>
                     ),
                     const SizedBox(height: 30),
                     _statusLabel(),
+
+                    // 🔥 إضافة الميكروفون واليدين عند الغناء هنا
+                    if (_emotion.currentFaceAction == FaceAction.sing)
+                      _buildSingingMic(),
                   ],
                 ),
               ),
@@ -613,7 +765,7 @@ class _BimoProFaceState extends State<BimoProFace>
     if (_isBusy && _emotion.currentState != BimoState.thinking) {
       t = '◉ يتكلم';
       c = Colors.cyanAccent.withOpacity(0.7);
-    } else
+    } else {
       switch (_emotion.currentState) {
         case BimoState.thinking:
           t = '◌ يفكر...';
@@ -627,6 +779,7 @@ class _BimoProFaceState extends State<BimoProFace>
           t = _aloneMode ? '○ وحيد...' : '● يستمع';
           c = Colors.yellowAccent.withOpacity(0.6);
       }
+    }
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 300),
       opacity: t.isEmpty ? 0 : 1,
