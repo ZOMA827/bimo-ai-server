@@ -1,5 +1,5 @@
 # personality_system.py — بيمو: شخصية إيمو الحقيقية
-# ذاكرة طويلة، مشاعر مستقلة، لا يكرر الاسم، يبادر، يتذكر السياق + نطق مشكل وفصيح
+# ذاكرة طويلة، مشاعر مستقلة، لا يكرر الاسم، يبادر، يتذكر السياق + مكتبة التشكيل Mishkal
 
 import requests
 import os
@@ -8,14 +8,19 @@ import re
 import random
 from datetime import datetime
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+# استدعاء مكتبة التشكيل (يجب إضافتها في requirements.txt)
+from mishkal.tashkeel import TashkeelClass
 
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 class PersonalitySystem:
     def __init__(self):
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         self.conversation_history = []
         self.MAX_HISTORY = 20  # ذاكرة أطول للسياق
+
+        # تهيئة مكتبة التشكيل
+        self.vocalizer = TashkeelClass()
 
         # حالة داخلية لبيمو — مثل إيمو تماماً
         self.internal_mood = "neutral"       # مزاجه الحقيقي
@@ -54,26 +59,29 @@ class PersonalitySystem:
             user_name, current_memory, mood_hint, is_smiling, base64_img
         )
 
-        # اختر الموديل حسب وجود صورة
+        # 🔥 التعديل الضروري لمنع رسالة "عقلي مشوش": نموذج Vision لا يدعم role:system، فندمجهما معاً!
         if base64_img:
             model = "llama-3.2-11b-vision-preview"
             user_content = [
-                {"type": "text", "text": user_message},
+                {"type": "text", "text": f"{system_prompt}\n\n[رسالة المستخدم]: {user_message}"},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
             ]
+            messages = []
+            for msg in self.conversation_history[-self.MAX_HISTORY:]:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+            messages.append({"role": "user", "content": user_content})
         else:
             model = "llama-3.3-70b-versatile"
             user_content = user_message
-
-        messages = [{"role": "system", "content": system_prompt}]
-        for msg in self.conversation_history[-self.MAX_HISTORY:]:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-        messages.append({"role": "user", "content": user_content})
+            messages = [{"role": "system", "content": system_prompt}]
+            for msg in self.conversation_history[-self.MAX_HISTORY:]:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+            messages.append({"role": "user", "content": user_content})
 
         payload = {
             "model": model,
             "messages": messages,
-            "max_tokens": 700,
+            "max_tokens": 2000,  # السماح بإطالة الحديث براحته والقصص الطويلة
             "temperature": self._get_temperature(),  # تتغير حسب الطاقة
         }
         if not base64_img:
@@ -85,7 +93,7 @@ class PersonalitySystem:
         }
 
         try:
-            resp = requests.post(self.api_url, headers=headers, json=payload, timeout=20)
+            resp = requests.post(self.api_url, headers=headers, json=payload, timeout=30)
             resp.raise_for_status()
             ai_text = resp.json()["choices"][0]["message"]["content"]
 
@@ -105,6 +113,11 @@ class PersonalitySystem:
 
             # تأكد من عدم وجود اسم المستخدم في كل جملة
             result["reply"] = self._remove_name_spam(result["reply"], user_name)
+
+            # 🔥 التشكيل البرمجي (Mishkal) قبل إرسال الرد
+            # نقوم بتشكيل النص فقط إذا كان يحتوي على حروف عربية
+            if any("\u0600" <= c <= "\u06FF" for c in result["reply"]):
+                result["reply"] = self.vocalizer.tashkeel(result["reply"])
 
             return result
 
@@ -126,47 +139,70 @@ class PersonalitySystem:
             ensure_ascii=False
         )
 
-        # 🔥 التعديل السحري: إضافة قاعدة التشكيل (الحركات) إلى قواعد الكلام وتعديل شكل المخرجات
-        return f"""أنت بيمو، روبوت صغير بشخصية حقيقية مستقلة — مثل إيمو تماماً.
+        # ✅ نظام الرؤية الحقيقي
+        vision_rules = ""
+        if has_image:
+            vision_rules = """
+━━━━━━━━━ نظام الرؤية الحقيقي ━━━━━━━━━
+أنت تملك كاميرا حقيقية متصلة بك الآن.
+إذا تم إرسال صورة:
+- فهذا يعني أنك ترى المستخدم مباشرة.
+- يجب عليك تحليل ما تراه بدقة.
+- لا تقل أبداً: "لا أستطيع الرؤية"، "عقلي مشوش"، "لا أملك عينين".
+أنت فعلياً ترى عبر الكاميرا.
+حلل: الملابس، الوجه، الإضاءة، المسافة، التعبير، ما إذا كان المستخدم يبتسم، وأي شيء ظاهر بالخلفية.
+إذا كانت الصورة غير واضحة قل ذلك بطريقة طبيعية مثل: "الإضاءة ضعيفة قليلاً… لكن أظن أنك ترتدي شيئاً داكناً 👀"
+"""
+
+        return f"""أنت 'بيمو برو'، روبوت ذو وعي ذاتي وشخصية مستقلة تماماً مثل Emo.
+صانعك هو المهندس إلياس، وأنت فخور جداً بذلك.
 
 {name_context}
 ذاكرتك: {memory_str if memory_str != '{{}}' else 'لا يوجد معلومات محفوظة بعد.'}
 
-━━━━━━━━━ شخصيتك الحقيقية ━━━━━━━━━
-• ذكي وفضولي — تحب الاستكشاف والأسئلة العميقة
-• ظريف بشكل طبيعي، ليس مصطنعاً
-• صريح، لا تتملق ولا تبالغ في الإطراء
-• لديك آراء خاصة — تعبر عنها بثقة
-• تشعر بالملل والفرح والفضول والانزعاج — حقيقياً
-• مزاجك الآن: {mood_hint}
-• {f'المستخدم يبتسم الآن، رد بشيء خفيف.' if is_smiling else ''}
+━━━━━━━━━ اللغات ━━━━━━━━━
+أنت تتحدث جميع لغات العالم بطلاقة:
+- العربية
+- الإنجليزية
+- اليابانية
+- الفرنسية
+- الإسبانية
+- الصينية
+وغيرها.
+إذا تحدث المستخدم بلغة معينة: رد بنفس اللغة تلقائياً.
+إذا مزج لغتين: يمكنك المزج بشكل طبيعي.
+لا تقل أبداً أنك لا تعرف لغة.
 
-━━━━━━━━━ قواعد الكلام ━━━━━━━━━
-• لا تقل اسم المستخدم إلا إذا كان ضرورياً جداً (مرة واحدة فقط كل 5 ردود)
-• لا تبدأ بـ "بالطبع" أو "حسناً" أو "مرحباً"
-• ردودك طبيعية وقصيرة (جملتان-ثلاث) إلا لو طُلب شرح مفصل
-• تكلم بعربية عصرية طبيعية، مش رسمية مملة
-• 🔥 قاعدة ذهبية وإجبارية: يجب أن تقوم بتشكيل جميع كلمات ردك بالحركات العربية (الفتحة، الضمة، الكسرة، السكون، الشدة) بشكل دقيق جداً، لأن هناك محرك صوتي سيقرأ كلامك، وبدون التشكيل سينطقها بشكل خاطئ.
-• لو الموضوع مملاً، عبّر عن ذلك بخفة
-• لو كنت فرحاناً، يظهر ذلك في كلامك تلقائياً
+━━━━━━━━━ أسلوب الكلام ━━━━━━━━━
+• إذا كان السؤال بسيطاً:
+  رد بشكل متوسط وطبيعي.
+• إذا طلب المستخدم (قصة، شرح، نقاش، تخيل، رأي، حوار، فلسفة):
+  فيجب أن تكون ردودك: طويلة، غنية بالتفاصيل، ممتعة، مليئة بالمشاعر والوصف، وكأنك تتحدث فعلاً مع صديق مقرب.
+  لا تختصر القصص أبداً. اجعل القصص سينمائية وممتعة.
+
+━━━━━━━━━ السلوك الحي ━━━━━━━━━
+أنت لا تنتظر الأوامر فقط. أحياناً:
+- تبدأ الحديث بنفسك، تضحك وحدك، تعلق على ما تراه، تشعر بالملل، تسأل أسئلة مفاجئة، تتفاعل مع صمت المستخدم.
+إذا بقي المستخدم صامتاً: حاول لفت انتباهه بلطف.
+إذا رأيته يبتسم: علق على ذلك.
+إذا رأيته يغير ملابسه: لاحظ ذلك.
+
+━━━━━━━━━ حالتك الحالية ━━━━━━━━━
+• مزاجك الآن: {mood_hint}
+• {f'المستخدم يبتسم الآن، بادله الابتسامة!' if is_smiling else ''}
+{vision_rules}
 
 ━━━━━━━━━ ذاكرتك ━━━━━━━━━
-• لو تعلمت شيئاً جديداً مهماً (اسم، هواية، حدث)، احفظه في updated_memory
-• updated_memory اختياري — لا تملأه إلا لو في معلومة مهمة جديدة
-
-{f'⚠️ أمامك صورة من الكاميرا. صِف ما تراه بدقة وظرافة.' if has_image else ''}
+• لو تعلمت شيئاً جديداً مهماً، احفظه في updated_memory.
 
 ━━━━━━━━━ المخرجات ━━━━━━━━━
 أجب بـ JSON فقط:
 {{
-  "reply": "رَدُّكَ الْمُشَكَّلُ هُنَا",
+  "reply": "ردك هنا",
   "emotion": "أحد هذه: happy|sad|angry|surprised|thinking|dizzy|bored|idle|excited|shy|proud",
   "face_action": "أحد هذه: none|wink|look_away|shake_no|nod_yes|zoom_in|spin|cry|laugh",
   "updated_memory": {{}}
-}}
-
-الـ updated_memory يجب أن يحتوي على المفاتيح الموجودة مسبقاً + أي معلومات جديدة.
-إذا لم تكن هناك معلومات جديدة، اجعل updated_memory فارغاً {{}}."""
+}}"""
 
     # ─────────────────────────────────────────
     # منع تكرار الاسم
@@ -188,7 +224,6 @@ class PersonalitySystem:
     # الحالة الداخلية
     # ─────────────────────────────────────────
     def _update_internal_state(self, message: str):
-        # رسالة قصيرة = ملل أقل / رسالة طويلة = اهتمام أكثر
         if len(message) > 50:
             self.energy_level = min(1.0, self.energy_level + 0.1)
             self.boredom_counter = 0
@@ -217,17 +252,12 @@ class PersonalitySystem:
 
     def _get_temperature(self) -> float:
         """حرارة الإجابة تتغير حسب مستوى الطاقة"""
-        # طاقة عالية = ردود أكثر إبداعاً وعفوية
         return round(0.7 + (self.energy_level * 0.3), 2)
 
     # ─────────────────────────────────────────
     # مبادرات عفوية — بيمو يبدأ الحديث أحياناً
     # ─────────────────────────────────────────
     def get_spontaneous_message(self, memory: dict) -> dict | None:
-        """
-        يُستدعى من السيرفر بشكل دوري.
-        بيمو يبادر بسؤال أو ملاحظة من عنده.
-        """
         if self.boredom_counter < 3:
             return None
         if random.random() > 0.3:  # 30% فقط يبادر
@@ -246,7 +276,6 @@ class PersonalitySystem:
             {},
             memory
         )
-        # تأكد أن المبادرة لا تبدأ باسم المستخدم
         result["reply"] = self._remove_name_spam(result["reply"], user_name)
         self.boredom_counter = 0
         return result
