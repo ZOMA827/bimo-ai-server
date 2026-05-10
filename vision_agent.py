@@ -1,13 +1,13 @@
 # vision_agent.py — الفص الثاني: وكيل الرؤية
-# ✅ تم التحديث إلى النموذج الجديد بعد إيقاف القديم
-# النموذج الجديد: llama-3.2-90b-vision-preview
+# ✅ تم التحديث إلى الجيل الرابع Llama 4 Scout بعد حذف الإصدارات القديمة
 
 import os, json, re, requests
 
 KEY   = os.environ.get("GROQ_API_KEY_2") or os.environ.get("GROQ_API_KEY")
 URL   = "https://api.groq.com/openai/v1/chat/completions"
-# 🔥 التحديث هنا: استخدام النموذج العملاق الجديد للرؤية بدلاً من القديم المحذوف
-MODEL = "llama-3.2-90b-vision-preview"
+
+# 🔥 التحديث هنا: استخدام النموذج العملاق الجديد للرؤية
+MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 class VisionAgent:
     def __init__(self, memory):
@@ -37,7 +37,7 @@ class VisionAgent:
 أجب بـ JSON فقط:
 {{"reply": "...", "emotion": "...", "face_action": "...", "updated_memory": {{}}}}"""
 
-        # دمج رسالة النظام مع رسالة المستخدم لأن نموذج الرؤية يرفض دور System
+        # دمج رسالة النظام مع رسالة المستخدم (النموذج يفضلها هكذا)
         full_text_prompt = f"{system_prompt}\n\n[رسالة المستخدم]: {message}"
 
         # تنظيف مسار الصورة
