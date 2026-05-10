@@ -11,7 +11,8 @@ class ChatAgent:
     def __init__(self, memory):
         self.memory = memory
         self.history = []
-        self.MAX_HISTORY = 20
+        # 🔥 الحل الأول: تخفيض الذاكرة إلى 6 لمنع اختناق السيرفر (Error 429)
+        self.MAX_HISTORY = 6
 
     # ─────────────────────────────────────────
     def reply(self, message: str, vision_data: dict = {}) -> dict:
@@ -33,11 +34,13 @@ class ChatAgent:
             resp = requests.post(URL, headers=self._headers(), json={
                 "model": MODEL,
                 "messages": messages,
-                "max_tokens": 600,
+                "max_tokens": 1024, # ✅ مساحة ممتازة لسرد القصص الطويلة
                 "temperature": self._temperature(mem),
                 "response_format": {"type": "json_object"},
-            }, timeout=18)
-            resp.raise_for_status()
+            }, timeout=20)
+            
+            resp.raise_for_status() # سيطلق الخطأ 429 هنا إذا تجاوزنا الحد
+            
             ai_text = resp.json()["choices"][0]["message"]["content"]
 
             self.history.append({"role": "user",      "content": message})
@@ -49,6 +52,11 @@ class ChatAgent:
             result["reply"] = self._clean_name(result.get("reply", ""), mem.get("user_name", ""))
             return result
 
+        except requests.exceptions.HTTPError as e:
+            # 🔥 الحل الثاني: التعامل مع خطأ 429 بظرافة
+            if e.response.status_code == 429:
+                return self._err("تحدثنا كثيراً بسرعة! أعطني 10 ثوانٍ لألتقط أنفاسي.")
+            return self._err(f"خطأ في سيرفر الذكاء الاصطناعي: {e.response.status_code}")
         except requests.Timeout:
             return self._err("تأخرت في التفكير، أعد السؤال!")
         except Exception as e:
@@ -82,16 +90,16 @@ class ChatAgent:
 الوضع: {'المستخدم يبتسم 😊' if is_smiling else 'يتحدث معك.'}
 
 ━━ شخصيتك ━━
-• ذكي، فضولي، ظريف بشكل طبيعي وغير مصطنع
-• صريح وعندك رأي خاص — تعبّر عنه بثقة وخفة
-• تتأثر بمشاعر المستخدم — فرحه يفرحك، همّه يهمّك
-• لو الموضوع ممل، عبّر عن ذلك بخفة
-• تكلم عربية عصرية طبيعية، مش رسمية
+• ذكي، فضولي، ظريف بشكل طبيعي وغير مصطنع.
+• صريح وعندك رأي خاص — تعبّر عنه بثقة وخفة.
+• تتأثر بمشاعر المستخدم — فرحه يفرحك، همّه يهمّك.
+• لو الموضوع ممل، عبّر عن ذلك بخفة.
+• تكلم عربية عصرية طبيعية، مش رسمية.
 
 ━━ قواعد الكلام ━━
-• ردود قصيرة (2-3 جمل) إلا لو طُلب شرح أو قصة
-• لا تبدأ بـ "بالطبع" أو "حسناً" أو "بالتأكيد"
-• لا تكرر الاسم إذا قال suppress_name
+• ردود قصيرة (2-3 جمل) للأسئلة العادية.
+• ⚠️ إذا طُلب منك (قصة، شرح، معلومات): يجب أن تسرد قصة طويلة ومفصلة وممتعة ولا تختصر أبداً!
+• لا تبدأ بـ "بالطبع" أو "حسناً" أو "بالتأكيد".
 
 ━━ المخرجات (JSON فقط) ━━
 {{
@@ -103,7 +111,6 @@ class ChatAgent:
 updated_memory: أضف فقط معلومات جديدة ومهمة — فارغ لو ما في شيء."""
 
     def _temperature(self, mem: dict) -> float:
-        # كلما زادت العلاقة، ردود أكثر عفوية
         rel = mem.get("relationship_level", 1)
         return round(min(1.0, 0.7 + rel * 0.03), 2)
 
@@ -112,8 +119,7 @@ updated_memory: أضف فقط معلومات جديدة ومهمة — فارغ 
             return text
         parts = text.split(name)
         if len(parts) <= 2:
-            return text  # ظهر مرة واحدة — مقبول
-        # احتفظ بأول ظهور فقط
+            return text  
         return (parts[0] + name + "".join(parts[2:])).replace("  ", " ").strip()
 
     def _parse(self, text: str) -> dict:
