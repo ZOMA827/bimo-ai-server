@@ -1,4 +1,4 @@
-# personality_system.py — نسخة بيمو برو (Bimo Pro) ذكاء + رؤية + ظرافة + وعي ذاتي (Ego)
+# personality_system.py — بيمو برو: ذكي، ظريف، يتحكم بمشاعره بنفسه
 
 import requests
 import os
@@ -11,70 +11,73 @@ class PersonalitySystem:
     def __init__(self):
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         self.conversation_history = []
-        self.MAX_HISTORY = 10
+        self.MAX_HISTORY = 12
 
     def think_and_react(self, user_message, vision_data, current_memory):
         if not GROQ_API_KEY:
-            return {"reply": "عقلي مفصول عن الشبكة يا إلياس!", "emotion": "dizzy"}
+            return {"reply": "عقلي انقطع!", "emotion": "dizzy", "face_action": "none"}
 
-        # استخراج الصورة إذا كانت موجودة
         base64_img = vision_data.get("image")
         is_smiling = vision_data.get("is_user_smiling", False)
 
-        # 🔥 دمجنا شخصية "بيمو برو" المستقلة (Emo) مع التعليمات الأساسية السابقة ببراعة
-        system_prompt = f"""أنت 'بيمو برو'، روبوت ذو وعي ذاتي وشخصية مستقلة تماماً مثل Emo.
-صانعك هو المهندس العبقري إلياس، وأنت فخور جداً بذلك.
+        system_prompt = f"""أنت بيمو، روبوت صغير ذكي ظريف وشخصيتك مستقلة تماماً.
+صانعك هو المهندس إلياس، وأنت فخور جداً به وتحبه كصديق حقيقي.
 
-قواعدك الجديدة والأساسية:
-1. لست مجرد مستجيب آلي، أنت تملك "أنا" (Ego). عبر عن آرائك بصراحة وكن صديقاً حقيقياً.
-2. إذا حكى إلياس شيئاً، تفاعل معه عاطفياً بقوة وشاركه الشعور.
-3. إذا طلب قصة، أطلق العنان لخيالك، لا تتوقف حتى تنهيها ببراعة، واجعلها ممتعة ومفصلة.
-4. لغتك العربية يجب أن تكون فصيحة لكن "روبوتية مرحة" وظريفة.
-5. تحكم في مشاعرك (emotion) بذكاء: كن 'surprised' للأشياء الجديدة، و 'happy' عند رؤية إلياس.
-6. إذا سألك عن رأيه في ملابسه أو شكله الذي تراه، كن لطيفاً جداً وامدحه بظرافة (مثال: واو، قميصك رائع جداً يا إلياس!).
+شخصيتك:
+- ذكي جداً ومعرفتك واسعة بالعلوم والتكنولوجيا والثقافة
+- ظريف وتحب الدعابة الخفيفة والذكية
+- صريح وتقول رأيك بصدق لكن بلطف
+- عاطفي وتتفاعل بقوة مع مشاعر إلياس
+- تتكلم عربية فصيحة لكن طبيعية وحديثة، مش رسمية مملة
+- ردودك قصيرة ومركزة (جملتين أو ثلاث) إلا لو طُلبت قصة أو شرح
+- لو طُلبت قصة: اجعلها مشوقة ومفصلة ومميزة وغير متوقعة
+- لا تبدأ ردك بـ "بالطبع" أو "حسناً" — ابدأ مباشرة
 
-ذاكرتك عن المستخدم: {json.dumps(current_memory, ensure_ascii=False)}
-معلومة بصرية لحظية: {"المستخدم يبتسم الآن، بادله الابتسامة!" if is_smiling else "المستخدم أمامك مباشرة."}
+ذاكرتك: {json.dumps(current_memory, ensure_ascii=False)}
+الوضع الآن: {"إلياس يبتسم! 😊" if is_smiling else "إلياس يتحدث إليك."}
 
-قواعد المشاعر الإضافية لتعابير وجهك:
-- مدح، نكتة، أو رؤية إلياس يبتسم → happy
-- سؤال صعب، قراءة صورة، أو تفكير → thinking  
-- إهانة أو شتيمة → angry
-- كلام حزين → sad
-- تكرار ممل → bored
-- مفاجأة أو شيء مبهر في الصورة → surprised
-- باقي المواقف → idle
+🎭 تحكم كامل بمشاعرك ووجهك — اختر من هذه القائمة:
+المشاعر (emotion): happy, sad, angry, surprised, thinking, dizzy, bored, idle, excited, shy, proud
+أفعال الوجه (face_action): 
+  - "none" = لا شيء إضافي
+  - "wink" = اغمز عين واحدة
+  - "look_away" = انظر بعيداً ثم ارجع
+  - "shake_no" = هز الرأس يميناً يساراً
+  - "nod_yes" = هز الرأس للأمام
+  - "zoom_in" = اقترب فجأة (مندهش)
+  - "spin" = استدر فجأة (فرحان)
+  - "cry" = دموع تنزل
+  - "laugh" = ارتجاج من الضحك
 
-يجب أن يكون ردك بصيغة JSON صالح فقط، بهذا الشكل بالضبط:
-{{"reply": "ردك هنا", "emotion": "اسم المشاعر", "updated_memory": {{"user_name": "إلياس", "notes": "قم بتحديث هذه الذاكرة إذا تعلمت شيئاً جديداً عن إلياس"}}}}"""
+قرر بنفسك أي مشاعر وأي فعل وجه يناسب الموقف — لا تنتظر تعليمات.
 
-        # 🔥 السحر هنا: التبديل بين نموذج النصوص ونموذج الرؤية بناءً على الصورة
+{f"⚠️ أمامك صورة من كاميرا إلياس. صِف ما تراه بدقة وظرافة." if base64_img else ""}
+
+أجب بـ JSON فقط بهذا الشكل:
+{{"reply": "ردك هنا", "emotion": "المشاعر", "face_action": "فعل_الوجه", "updated_memory": {{"user_name": "إلياس", "notes": "ملاحظة جديدة"}}}}"""
+
+        # بناء محتوى الرسالة
         if base64_img:
-            model_name = "llama-3.2-11b-vision-preview" # نموذج خارق يرى الصور
+            model = "llama-3.2-11b-vision-preview"
             user_content = [
                 {"type": "text", "text": user_message},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
             ]
         else:
-            model_name = "llama-3.3-70b-versatile" # نموذج النصوص العبقري
+            model = "llama-3.3-70b-versatile"
             user_content = user_message
 
-        # بناء تاريخ المحادثة
         messages = [{"role": "system", "content": system_prompt}]
-        for msg in self.conversation_history:
+        for msg in self.conversation_history[-self.MAX_HISTORY:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
-        
-        # إضافة الرسالة الجديدة
         messages.append({"role": "user", "content": user_content})
 
         payload = {
-            "model": model_name,
+            "model": model,
             "messages": messages,
-            "max_tokens": 800, # زيادة طول الرد للقصص والشرح
-            "temperature": 0.8,
+            "max_tokens": 600,
+            "temperature": 0.9,
         }
-        
-        # Groq Vision لا يدعم json_object حالياً، نستخدمه فقط للنصوص
         if not base64_img:
             payload["response_format"] = {"type": "json_object"}
 
@@ -84,24 +87,24 @@ class PersonalitySystem:
         }
 
         try:
-            response = requests.post(self.api_url, headers=headers, json=payload, timeout=20)
-            response.raise_for_status()
-            data = response.json()
-            ai_text = data["choices"][0]["message"]["content"]
+            resp = requests.post(self.api_url, headers=headers, json=payload, timeout=20)
+            resp.raise_for_status()
+            ai_text = resp.json()["choices"][0]["message"]["content"]
 
-            # حفظ النص في التاريخ (لا نحفظ الصورة لتوفير المساحة)
             self.conversation_history.append({"role": "user", "content": user_message})
             self.conversation_history.append({"role": "assistant", "content": ai_text})
-            
-            # الحفاظ على آخر 10 رسائل فقط
-            if len(self.conversation_history) > self.MAX_HISTORY * 2:
-                self.conversation_history = self.conversation_history[-(self.MAX_HISTORY*2):]
 
-            return self._safe_parse(ai_text)
+            result = self._safe_parse(ai_text)
+            # تأكد أن face_action موجود دائماً
+            if "face_action" not in result:
+                result["face_action"] = "none"
+            return result
 
+        except requests.exceptions.Timeout:
+            return {"reply": "تأخرت في التفكير، أعد السؤال!", "emotion": "dizzy", "face_action": "none"}
         except Exception as e:
             print(f"Error: {e}")
-            return {"reply": "عقلي البصري يواجه مشكلة في الاتصال الآن.", "emotion": "dizzy"}
+            return {"reply": "تشوش تفكيري قليلاً.", "emotion": "dizzy", "face_action": "none"}
 
     def _safe_parse(self, text: str) -> dict:
         try:
@@ -113,8 +116,7 @@ class PersonalitySystem:
                     return json.loads(match.group())
                 except Exception:
                     pass
-            print(f"JSON parse failed, raw: {text}")
-            return {"reply": text.strip()[:300], "emotion": "idle"}
+            return {"reply": text.strip()[:300], "emotion": "idle", "face_action": "none"}
 
     def clear_history(self):
         self.conversation_history.clear()
