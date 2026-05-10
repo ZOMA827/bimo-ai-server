@@ -106,6 +106,14 @@ def transcribe_audio():
         )
         r.raise_for_status()
         text = r.json().get('text', '').strip()
+        
+        # 🛡️ فلتر هلوسات Whisper (يتجاهل الكلمات التي يخترعها النموذج وقت الصمت)
+        hallucinations = ["شكرا", "شكراً", "ترجمة", "نانسي", "قنقر", "إلى اللقاء", "وداعا", "وشكرا", "شكرا لكم"]
+        for h in hallucinations:
+            if text == h or text.replace(" ", "") == h or h in text and len(text) < 15:
+                print(f"🚫 تم تجاهل هلوسة Whisper: {text}")
+                return jsonify({'text': ''}) # إرجاع نص فارغ لكي لا يرد بيمو
+
         print(f"🎤 {text}")
         return jsonify({'text': text})
 
