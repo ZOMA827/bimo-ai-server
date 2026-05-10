@@ -1,62 +1,97 @@
-# memory_engine.py — الذاكرة المشتركة بين الفصوص الثلاثة
+# memory_engine.py — ذاكرة بيمو السحابية (Firebase Edition) ☁️
 
-import json, os, time
+import firebase_admin
+from firebase_admin import credentials, db
+import os
+import json
+import time
 
-FILE = "memory.json"
+# الحصول على بيانات الفايربيس من متغيرات البيئة (أمان 100%)
+# ملاحظة: سنضع محتوى ملف الـ JSON الذي حملته في متغير اسمه FIREBASE_CONFIG
+FIREBASE_CONFIG = os.environ.get("FIREBASE_CONFIG")
+DATABASE_URL = os.environ.get("FIREBASE_DB_URL")
 
-DEFAULT = {
-    "user_name":         "",
-    "notes":             "",
-    "favorite_game":     "",
-    "favorite_anime":    "",
-    "favorite_music":    "",
-    "last_topic":        "",
-    "last_seen":         "",
-    "mood_history":      [],
+DEFAULT_MEMORY = {
+    "user_name": "",
+    "notes": "",
+    "favorite_game": "",
+    "favorite_anime": "",
+    "favorite_music": "",
+    "mood_history": [],
+    "last_topic": "",
+    "last_seen": "",
     "relationship_level": 1,
 }
 
 class MemoryEngine:
     def __init__(self):
-        self._data = self._load()
-        self._lock = __import__('threading').Lock()
+        # تهيئة الاتصال بفايربيس مرة واحدة فقط
+        if not firebase_admin._apps:
+            try:
+                cred_dict = json.loads(FIREBASE_CONFIG)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred, {
+                    'databaseURL': DATABASE_URL
+                })
+                print("✅ تم الاتصال بـ Firebase بنجاح!")
+            except Exception as e:
+                print(f"❌ فشل الاتصال بـ Firebase: {e}")
+
+        # المرجع الأساسي للبيانات في قاعدة البيانات
+        self.db_ref = db.reference("bimo_memory")
+        self.memory = self._load()
 
     def _load(self) -> dict:
-        if os.path.exists(FILE):
-            try:
-                with open(FILE, "r", encoding="utf-8") as f:
-                    return {**DEFAULT, **json.load(f)}
-            except Exception:
-                pass
-        return DEFAULT.copy()
+        """جلب الذاكرة من السحابة"""
+        try:
+            data = self.db_ref.get()
+            if data:
+                # دمج البيانات المجلوبة مع الهيكل الافتراضي لضمان عدم وجود أخطاء
+                return {**DEFAULT_MEMORY, **data}
+        except Exception as e:
+            print(f"⚠️ خطأ أثناء جلب الذاكرة: {e}")
+        return DEFAULT_MEMORY.copy()
 
-    def get(self) -> dict:
-        with self._lock:
-            return dict(self._data)
+    def save_memory(self, new_data: dict):
+        """حفظ وتحديث الذاكرة في السحابة فوراً"""
+        if not new_data:
+            return
 
-    def save(self, new_data: dict):
-        with self._lock:
-            for k, v in new_data.items():
-                if v:
-                    self._data[k] = v
-            self._data["last_seen"] = time.strftime("%Y-%m-%d %H:%M")
-            lvl = self._data.get("relationship_level", 1)
-            self._data["relationship_level"] = round(min(10, lvl + 0.05), 2)
-            try:
-                with open(FILE, "w", encoding="utf-8") as f:
-                    json.dump(self._data, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                print(f"Memory save error: {e}")
+        # تحديث الكائن المحلي أولاً
+        for key, value in new_data.items():
+            if value:
+                self.memory[key] = value
+
+        self.memory["last_seen"] = time.strftime("%Y-%m-%d %H:%M")
+
+        # زيادة مستوى العلاقة
+        if self.memory.get("relationship_level", 1) < 10:
+            self.memory["relationship_level"] = min(
+                10,
+                self.memory.get("relationship_level", 1) + 0.1
+            )
+
+        # الرفع للسحابة (Firebase)
+        try:
+            self.db_ref.set(self.memory)
+            print("☁️ تمت مزامنة الذاكرة مع السحابة.")
+        except Exception as e:
+            print(f"❌ فشل الحفظ في السحابة: {e}")
 
     def add_mood(self, mood: str):
-        with self._lock:
-            h = self._data.get("mood_history", [])
-            h.append({"mood": mood, "t": time.strftime("%H:%M")})
-            self._data["mood_history"] = h[-5:]
-        self.save({})
+        history = self.memory.get("mood_history", [])
+        history.append({"mood": mood, "time": time.strftime("%H:%M")})
+        self.memory["mood_history"] = history[-5:]
+        self.save_memory({})
+
+    def get_memory(self) -> dict:
+        return self.memory
 
     def reset(self):
-        with self._lock:
-            self._data = DEFAULT.copy()
-            if os.path.exists(FILE):
-                os.remove(FILE)
+        """مسح الذاكرة من السحابة"""
+        self.memory = DEFAULT_MEMORY.copy()
+        try:
+            self.db_ref.set(self.memory)
+            print("🧹 تم تصقير الذاكرة السحابية.")
+        except Exception as e:
+            print(f"❌ فشل مسح الذاكرة: {e}")
