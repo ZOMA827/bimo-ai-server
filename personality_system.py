@@ -31,7 +31,15 @@ class PersonalitySystem:
     def think_and_react(self, user_message: str, vision_data: dict, current_memory: dict) -> dict:
         if not GROQ_API_KEY:
             return self._fallback("عقلي انقطع!")
-
+        
+        # 🔥 السحر هنا: إذا أرسل التطبيق إشارة صمت/ملل
+        if "[SYSTEM: USER_IDLE]" in user_message:
+            spontaneous = self.get_spontaneous_message(current_memory)
+            if spontaneous:
+                return spontaneous
+            else:
+                return {"reply": "يا إلياس، أين ذهبت؟ هل تركتني وحدي؟ تعال ندردش!", "emotion": "sad", "face_action": "look_away"}
+       
         # تحديث الطاقة والملل
         self._update_internal_state(user_message)
 
