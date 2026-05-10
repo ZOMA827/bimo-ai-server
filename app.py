@@ -14,7 +14,7 @@ from personality_system import PersonalitySystem
 app = Flask(__name__)
 CORS(app)
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY_2") or os.environ.get("GROQ_API_KEY_3")
 SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 memory_engine = MemoryEngine()
