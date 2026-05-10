@@ -63,6 +63,7 @@ class ChatAgent:
             return self._err("تشوش تفكيري.")
 
     # ─────────────────────────────────────────
+    # ✅ تم تحديث الدالة لكي تلتقط الأنمي المفضل وتضيفه للذاكرة
     def _build_prompt(self, mem: dict, is_smiling: bool, suppress_name: bool) -> str:
         name = mem.get("user_name", "")
         mem_str = json.dumps(
@@ -105,9 +106,12 @@ class ChatAgent:
   "reply": "ردك الطبيعي",
   "emotion": "happy|sad|angry|surprised|thinking|dizzy|bored|idle|excited|shy|proud",
   "face_action": "none|wink|look_away|shake_no|nod_yes|zoom_in|spin|cry|laugh",
-  "updated_memory": {{}}
+  "updated_memory": {{
+      "favorite_anime": "اسم الأنمي إذا ذكر المستخدم أنه يتابعه أو يحبه",
+      "notes": "أي اهتمامات أخرى يذكرها"
+  }}
 }}
-updated_memory: أضف فقط معلومات جديدة ومهمة — فارغ لو ما في شيء."""
+updated_memory: ضع فقط المعلومات الجديدة والمهمة. اتركها فارغة {{}} إذا لم يذكر معلومات عن نفسه."""
 
     def _temperature(self, mem: dict) -> float:
         rel = mem.get("relationship_level", 1)
