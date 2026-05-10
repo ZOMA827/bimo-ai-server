@@ -9,7 +9,7 @@ import re
 import random
 from datetime import datetime
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY_2") or os.environ.get("GROQ_API_KEY_3")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 class PersonalitySystem:
     def __init__(self):
