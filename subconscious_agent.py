@@ -1,6 +1,4 @@
-# subconscious_agent.py — الفص الثالث: العقل الباطن + رفيق الاهتمامات اليومية
-# النموذج: llama-3.1-8b-instant | المفتاح: GROQ_API_KEY_3
-
+# subconscious_agent.py — الفص الثالث: العقل الباطن المخصص (Personalized)
 import os, json, re, time, random, threading, requests
 from datetime import datetime
 
@@ -18,37 +16,9 @@ class SubconsciousAgent:
         self._pending     = None
         self._lock        = threading.Lock()
         
-        # ── متغيرات الاهتمامات اليومية ──
-        self.daily_anime = []
-        self.upcoming_exams = []
-        self._last_api_check = 0
-        
         self._thread      = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
-    # ─────────────────────────────────────────
-    # 🌟 دمج الاهتمامات (APIs)
-    # ─────────────────────────────────────────
-    def _fetch_daily_interests(self):
-        """نجلب البيانات مرة واحدة كل بضع ساعات لتخفيف الضغط"""
-        current_time = time.time()
-        # تحديث البيانات كل 6 ساعات (21600 ثانية)
-        if current_time - self._last_api_check < 21600:
-            return
-
-        print("🔄 العقل الباطن يقرأ التحديثات اليومية (أنمي + امتحانات)...")
-        
-        # 1. جلب الأنمي (هنا يمكنك وضع منطق دالة loadDaily الخاص بك)
-        # كمثال: To Be Hero X أو غيره
-        self.daily_anime = ["To Be Hero X", "One Piece", "Bleach"] 
-        
-        # 2. جلب جدول الامتحانات (هندسة الإعلام الآلي)
-        # يمكنك ربطها بـ API أو قائمة ثابتة
-        self.upcoming_exams = ["امتحان الخوارزميات غداً", "تسليم مشروع الـ Firebase الأسبوع القادم"]
-
-        self._last_api_check = current_time
-
-    # ─────────────────────────────────────────
     def get_spontaneous(self) -> dict | None:
         with self._lock:
             msg = self._pending
@@ -80,15 +50,14 @@ class SubconsciousAgent:
     def _generate(self) -> dict | None:
         if not KEY: return None
 
-        # تحديث الاهتمامات قبل التفكير
-        self._fetch_daily_interests()
-
         mem = self.memory.get()
         last_topic = mem.get("last_topic", "")
         name       = mem.get("user_name", "")
         rel        = mem.get("relationship_level", 1)
+        
+        # 🌟 قراءة الأنمي المفضل من الذاكرة السحابية
+        fav_anime  = mem.get("favorite_anime", "")
 
-        # 🌟 دمج الاهتمامات في خيارات المبادرة
         initiatives = [
             "اسأل سؤالاً فضولياً عن حياة المستخدم",
             "شارك حقيقة علمية مثيرة للاهتمام",
@@ -96,13 +65,23 @@ class SubconsciousAgent:
             "ناد المستخدم لأنك وحيد وتريد الدردشة",
         ]
 
-        if self.daily_anime:
-            anime = random.choice(self.daily_anime)
-            initiatives.append(f"أخبر المستخدم بحماس أن حلقة جديدة من أنمي {anime} قد صدرت للتو، واقترح عليه أخذ استراحة لمشاهدتها.")
-            
-        if self.upcoming_exams:
-            exam = random.choice(self.upcoming_exams)
-            initiatives.append(f"ذكر المستخدم بطريقة تحفيزية وظريفة بـ: {exam}. شجعه على الدراسة ولا تكن مزعجاً.")
+        # 🌟 إذا كان المستخدم لديه أنمي مفضل، ابحث عنه في الإنترنت الآن!
+        if fav_anime:
+            try:
+                print(f"🔄 العقل الباطن يبحث عن أخبار أنمي: {fav_anime}")
+                # نبحث في الـ API عن الأنمي المفضل
+                res = requests.get(f"https://api.jikan.moe/v4/anime?q={fav_anime}&limit=1", timeout=10)
+                if res.status_code == 200:
+                    data = res.json().get("data", [])
+                    if data:
+                        status = data[0].get("status", "غير معروف")
+                        episodes = data[0].get("episodes", "غير محدد")
+                        
+                        # إضافة مبادرة مخصصة جداً مبنية على البحث الحقيقي
+                        initiatives.append(f"تحدث بشغف عن الأنمي المفضل للمستخدم '{fav_anime}'. أخبره أنك بحثت عنه ووجدت أن حالته الآن '{status}' وعدد حلقاته '{episodes}'. اسأله عن رأيه فيه!")
+            except Exception as e:
+                # إذا فشل الاتصال بالإنترنت، يذكره من الذاكرة فقط
+                initiatives.append(f"تذكر الأنمي المفضل للمستخدم '{fav_anime}' واسأله بشغف إذا كان قد شاهد حلقات جديدة منه مؤخراً.")
 
         initiative_type = random.choice(initiatives)
 
