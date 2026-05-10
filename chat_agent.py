@@ -1,18 +1,18 @@
 # chat_agent.py — الفص الأول: وكيل الحوار السريع
-# النموذج: llama-3.3-70b-versatile | المفتاح: GROQ_API_KEY_1
+# ✅ تم التحديث إلى Llama 3.1 8B Instant لتفادي قيود السيرفر المجانية (Error 429)
 
 import os, json, re, requests
 
 KEY = os.environ.get("GROQ_API_KEY_1") or os.environ.get("GROQ_API_KEY")
 URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "llama-3.3-70b-versatile"
+# 🔥 التحديث السحري: هذا النموذج السريع يملك حدود استخدام ضخمة ولن يوقفك!
+MODEL = "llama-3.1-8b-instant"
 
 class ChatAgent:
     def __init__(self, memory):
         self.memory = memory
         self.history = []
-        # 🔥 الحل الأول: تخفيض الذاكرة إلى 6 لمنع اختناق السيرفر (Error 429)
-        self.MAX_HISTORY = 6
+        self.MAX_HISTORY = 6  # ذاكرة خفيفة لحماية السيرفر
 
     # ─────────────────────────────────────────
     def reply(self, message: str, vision_data: dict = {}) -> dict:
@@ -34,12 +34,12 @@ class ChatAgent:
             resp = requests.post(URL, headers=self._headers(), json={
                 "model": MODEL,
                 "messages": messages,
-                "max_tokens": 1024, # ✅ مساحة ممتازة لسرد القصص الطويلة
+                "max_tokens": 1024, # مساحة ممتازة للقصص الطويلة
                 "temperature": self._temperature(mem),
                 "response_format": {"type": "json_object"},
             }, timeout=20)
             
-            resp.raise_for_status() # سيطلق الخطأ 429 هنا إذا تجاوزنا الحد
+            resp.raise_for_status() 
             
             ai_text = resp.json()["choices"][0]["message"]["content"]
 
@@ -53,7 +53,6 @@ class ChatAgent:
             return result
 
         except requests.exceptions.HTTPError as e:
-            # 🔥 الحل الثاني: التعامل مع خطأ 429 بظرافة
             if e.response.status_code == 429:
                 return self._err("تحدثنا كثيراً بسرعة! أعطني 10 ثوانٍ لألتقط أنفاسي.")
             return self._err(f"خطأ في سيرفر الذكاء الاصطناعي: {e.response.status_code}")
