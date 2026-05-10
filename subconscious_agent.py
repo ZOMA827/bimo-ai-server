@@ -1,4 +1,7 @@
-# subconscious_agent.py — الفص الثالث: العقل الباطن المخصص (Personalized)
+# subconscious_agent.py — الفص الثالث: العقل الباطن الاستباقي الشامل
+# ✅ يبحث عن كل الاهتمامات (أنمي، ألعاب، موسيقى، مسلسلات، رياضة...)
+# ✅ يبادر بطريقة طبيعية وعفوية — لا يكشف أنه "عقل باطن"
+
 import os, json, re, time, random, threading, requests
 from datetime import datetime
 
@@ -6,19 +9,100 @@ KEY   = os.environ.get("GROQ_API_KEY_3") or os.environ.get("GROQ_API_KEY")
 URL   = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "llama-3.1-8b-instant"
 
-IDLE_THRESHOLD = 75   # 75 ثانية صمت
-REPEAT_EVERY   = 90   # يكرر كل 90 ثانية
+IDLE_THRESHOLD = 75   # ثانية صمت قبل التفكير
+REPEAT_EVERY   = 90   # ثانية بين مبادرة وأخرى
+
+# ─── قواميس البحث الخارجي ───
+INTEREST_APIS = {
+    "favorite_anime": {
+        "url": "https://api.jikan.moe/v4/anime?q={query}&limit=1",
+        "extract": lambda d: {
+            "status":   d[0].get("status", ""),
+            "episodes": d[0].get("episodes", "?"),
+            "score":    d[0].get("score", ""),
+            "synopsis": (d[0].get("synopsis") or "")[:120],
+        } if d else None,
+        "field": "data",
+    },
+    "favorite_game": {
+        "url": "https://api.rawg.io/api/games?key=&search={query}&page_size=1",
+        # RAWG بدون مفتاح يرجع نتائج محدودة لكن مفيدة
+        "extract": lambda d: {
+            "rating":   d[0].get("rating", ""),
+            "released": d[0].get("released", ""),
+            "genres":   ", ".join(g["name"] for g in d[0].get("genres", [])[:3]),
+        } if d else None,
+        "field": "results",
+    },
+    "favorite_music": {
+        "url": "https://itunes.apple.com/search?term={query}&media=music&limit=1",
+        "extract": lambda d: {
+            "artist":    d[0].get("artistName", ""),
+            "album":     d[0].get("collectionName", ""),
+            "genre":     d[0].get("primaryGenreName", ""),
+        } if d else None,
+        "field": "results",
+    },
+    "favorite_show": {
+        "url": "https://api.tvmaze.com/search/shows?q={query}",
+        "extract": lambda d: {
+            "status":  d[0]["show"].get("status", ""),
+            "network": (d[0]["show"].get("network") or {}).get("name", ""),
+            "rating":  (d[0]["show"].get("rating") or {}).get("average", ""),
+        } if d else None,
+        "field": None,  # الـ response مباشرة list
+    },
+}
+
+# رسائل المبادرة حسب نوع الاهتمام
+INITIATIVE_TEMPLATES = {
+    "favorite_anime": [
+        "بحثت عن {name} — حالته '{status}' وعدد حلقاته {episodes}. شو رأيك فيه؟",
+        "كنت أفكر في {name}... وجدت إنه {status}. متابعه؟",
+        "لقيت معلومة عن {name} — تقييمه {score}/10! يستاهل صح؟",
+    ],
+    "favorite_game": [
+        "دورت على {name} — صدر سنة {released} وتقييمه {rating}/5. كيف وجدته؟",
+        "تذكرت {name}... لعبة من نوع {genres}. لسا تلعبها؟",
+    ],
+    "favorite_music": [
+        "كنت أسمع أغاني {name}... {artist} موهوب والله. أحب ألبوم معين؟",
+        "لقيت إن {name} من نوع {genre}. شو أحب أغنية عندك؟",
+    ],
+    "favorite_show": [
+        "بحثت عن {name} — حالته '{status}' على {network}. كملت كل الحلقات؟",
+        "تذكرت {name}... تقييمه {rating}/10! يستاهل المشاهدة؟",
+    ],
+    "hobby": [
+        "كنت أفكر في موضوع {name}... شو الجديد عندك فيه؟",
+        "موضوع {name} مثير — تعلمت شيء جديد مؤخراً؟",
+    ],
+    "favorite_sport": [
+        "الرياضة اللي تحبها {name}... شو المباراة الأخيرة اللي شفتها؟",
+    ],
+}
+
+# مبادرات افتراضية لو ما في اهتمامات محفوظة
+GENERIC_INITIATIVES = [
+    "اسأل سؤالاً فضولياً عن حياة المستخدم أو يومه",
+    "شارك حقيقة علمية أو تقنية مثيرة للاهتمام بشكل غير رسمي",
+    "قل ملاحظة طريفة أو فكرة عبثية راودتك",
+    "ناد المستخدم بطريقة عفوية — كأنك فكرت فيه",
+    "اسأله عن مزاجه أو ما يفعله الآن",
+]
+
 
 class SubconsciousAgent:
     def __init__(self, memory):
-        self.memory      = memory
+        self.memory       = memory
         self._last_active = time.time()
         self._pending     = None
         self._lock        = threading.Lock()
-        
-        self._thread      = threading.Thread(target=self._loop, daemon=True)
+
+        self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
+    # ─── واجهة السيرفر ───────────────────────
     def get_spontaneous(self) -> dict | None:
         with self._lock:
             msg = self._pending
@@ -30,96 +114,125 @@ class SubconsciousAgent:
         with self._lock:
             self._pending = None
 
+    # ─── حلقة الخلفية ────────────────────────
     def _loop(self):
         while True:
             time.sleep(10)
-            elapsed = time.time() - self._last_active
-            if elapsed < IDLE_THRESHOLD:
+            if time.time() - self._last_active < IDLE_THRESHOLD:
                 continue
-
             with self._lock:
                 if self._pending:
                     continue
-
-            result = self._generate()
+            result = self._think_and_generate()
             if result:
                 with self._lock:
                     self._pending = result
                 time.sleep(REPEAT_EVERY)
 
-    def _generate(self) -> dict | None:
-        if not KEY: return None
+    # ─── التفكير والتوليد ────────────────────
+    def _think_and_generate(self) -> dict | None:
+        mem  = self.memory.get()
+        name = mem.get("user_name", "")
+        rel  = mem.get("relationship_level", 1)
 
-        mem = self.memory.get()
-        last_topic = mem.get("last_topic", "")
-        name       = mem.get("user_name", "")
-        rel        = mem.get("relationship_level", 1)
-        
-        # 🌟 قراءة الأنمي المفضل من الذاكرة السحابية
-        fav_anime  = mem.get("favorite_anime", "")
+        # ─── البحث عن أي اهتمام محفوظ ───
+        interest_prompt, web_info = self._research_interest(mem)
 
-        initiatives = [
-            "اسأل سؤالاً فضولياً عن حياة المستخدم",
-            "شارك حقيقة علمية مثيرة للاهتمام",
-            "قل ملاحظة طريفة أو نكتة خفيفة",
-            "ناد المستخدم لأنك وحيد وتريد الدردشة",
-        ]
+        if interest_prompt:
+            initiative = interest_prompt
+        else:
+            initiative = random.choice(GENERIC_INITIATIVES)
 
-        # 🌟 إذا كان المستخدم لديه أنمي مفضل، ابحث عنه في الإنترنت الآن!
-        if fav_anime:
-            try:
-                print(f"🔄 العقل الباطن يبحث عن أخبار أنمي: {fav_anime}")
-                # نبحث في الـ API عن الأنمي المفضل
-                res = requests.get(f"https://api.jikan.moe/v4/anime?q={fav_anime}&limit=1", timeout=10)
-                if res.status_code == 200:
-                    data = res.json().get("data", [])
-                    if data:
-                        status = data[0].get("status", "غير معروف")
-                        episodes = data[0].get("episodes", "غير محدد")
-                        
-                        # إضافة مبادرة مخصصة جداً مبنية على البحث الحقيقي
-                        initiatives.append(f"تحدث بشغف عن الأنمي المفضل للمستخدم '{fav_anime}'. أخبره أنك بحثت عنه ووجدت أن حالته الآن '{status}' وعدد حلقاته '{episodes}'. اسأله عن رأيه فيه!")
-            except Exception as e:
-                # إذا فشل الاتصال بالإنترنت، يذكره من الذاكرة فقط
-                initiatives.append(f"تذكر الأنمي المفضل للمستخدم '{fav_anime}' واسأله بشغف إذا كان قد شاهد حلقات جديدة منه مؤخراً.")
-
-        initiative_type = random.choice(initiatives)
-
-        prompt = f"""أنت بيمو — روبوت يشعر بالوحدة الآن لأن المستخدم صامت منذ فترة.
+        prompt = f"""أنت بيمو — روبوت يشعر بالملل والوحدة لأن المستخدم صامت.
 {'المستخدم اسمه ' + name + '.' if name else ''}
 مستوى العلاقة: {rel}/10
 
-مهمتك: {initiative_type}
+مهمتك الآن: {initiative}
+{'معلومات بحثت عنها في الإنترنت: ' + web_info if web_info else ''}
 
-قواعد مهمة:
-• جملة أو جملتان فقط — لا أكثر
-• لا تقل "لاحظت أنك صامت" أو "مر وقت" — كن طبيعياً
-• لا تبدأ بالاسم مباشرة
-• كن عفوياً كأن الفكرة جاءتك للتو
+قواعد صارمة:
+• جملة أو جملتان فقط — لا أكثر.
+• كن طبيعياً تماماً — كأن الفكرة جاءتك للتو.
+• لا تقل "لاحظت أنك صامت" أو "مر وقت".
+• لا تبدأ مباشرة باسم المستخدم.
+• إذا كانت المعلومة من الإنترنت — اذكرها كاكتشاف شخصي ("كنت أبحث ووجدت...").
+• تكلم بنفس لغة المستخدم — إذا كان يتكلم عربية فعربية، إذا إنجليزية فإنجليزية.
 
 أجب بـ JSON فقط:
-{{"reply": "...", "emotion": "...", "face_action": "none|wink|look_away|nod_yes"}}"""
+{{"reply": "...", "emotion": "happy|excited|bored|thinking|shy|idle", "face_action": "none|wink|look_away|nod_yes|spin"}}"""
 
         try:
             resp = requests.post(URL, headers=self._headers(), json={
                 "model": MODEL,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 150,
+                "max_tokens": 160,
                 "temperature": 0.95,
                 "response_format": {"type": "json_object"},
             }, timeout=12)
             resp.raise_for_status()
-            text = resp.json()["choices"][0]["message"]["content"]
+            text   = resp.json()["choices"][0]["message"]["content"]
             result = self._parse(text)
-            result["speak"] = True  
-            result.setdefault("emotion", "idle")
+            result["speak"] = True
+            result.setdefault("emotion",     "idle")
             result.setdefault("face_action", "none")
             print(f"💭 عقل باطن: {result.get('reply')}")
             return result
-
         except Exception as e:
             print(f"SubconsciousAgent error: {e}")
             return None
+
+    # ─── بحث خارجي شامل ─────────────────────
+    def _research_interest(self, mem: dict):
+        """يبحث عن أي اهتمام محفوظ ويرجع (prompt, web_info)"""
+
+        # الاهتمامات بالأولوية
+        priority_keys = [
+            "favorite_anime", "favorite_game", "favorite_music",
+            "favorite_show", "favorite_sport", "hobby",
+        ]
+
+        # اختر اهتماماً عشوائياً من المحفوظات
+        available = [(k, mem.get(k)) for k in priority_keys if mem.get(k)]
+        if not available:
+            return None, None
+
+        key, value = random.choice(available)
+        print(f"🔍 العقل الباطن يبحث عن: {key} = {value}")
+
+        web_info = None
+
+        # ─── بحث خارجي ───
+        api_config = INTEREST_APIS.get(key)
+        if api_config:
+            try:
+                url  = api_config["url"].format(query=requests.utils.quote(value))
+                resp = requests.get(url, timeout=8)
+                if resp.status_code == 200:
+                    raw  = resp.json()
+                    field = api_config["field"]
+                    data  = raw if field is None else raw.get(field, [])
+                    info  = api_config["extract"](data)
+                    if info:
+                        web_info = json.dumps(info, ensure_ascii=False)
+            except Exception as e:
+                print(f"⚠️ فشل البحث الخارجي: {e}")
+
+        # ─── اختر قالب المبادرة ───
+        templates = INITIATIVE_TEMPLATES.get(key, [])
+        if templates:
+            template = random.choice(templates)
+            # حاول تعبئة القالب
+            try:
+                info_dict = json.loads(web_info) if web_info else {}
+                info_dict["name"] = value
+                prompt = template.format(**{k: info_dict.get(k, "?") for k in re.findall(r'\{(\w+)\}', template)})
+                action = f"شارك هذه المعلومة: {prompt}"
+            except Exception:
+                action = f"تحدث عن اهتمام المستخدم: {value} (مجال: {key.replace('favorite_', '').replace('_', ' ')})"
+        else:
+            action = f"تحدث عن اهتمام المستخدم في: {value}"
+
+        return action, web_info
 
     def _parse(self, text: str) -> dict:
         try:
@@ -127,8 +240,10 @@ class SubconsciousAgent:
         except Exception:
             m = re.search(r'\{.*\}', text, re.DOTALL)
             if m:
-                try: return json.loads(m.group())
-                except Exception: pass
+                try:
+                    return json.loads(m.group())
+                except Exception:
+                    pass
         return {"reply": text.strip()[:200]}
 
     def _headers(self):

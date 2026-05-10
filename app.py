@@ -1,12 +1,12 @@
-# app.py — بيمو برو: ثلاثة فصوص (Agents) + ذاكرة مشتركة
+# app.py — بيمو برو: ثلاثة فصوص + ذاكرة سحابية + فلتر هلوسات
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os, traceback, threading, time, requests as req_lib
 
-from memory_engine import MemoryEngine
-from chat_agent import ChatAgent
-from vision_agent import VisionAgent
+from memory_engine      import MemoryEngine
+from chat_agent         import ChatAgent
+from vision_agent       import VisionAgent
 from subconscious_agent import SubconsciousAgent
 
 app = Flask(__name__)
@@ -14,15 +14,13 @@ CORS(app)
 
 SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
-# ─── الذاكرة المشتركة ───
-memory = MemoryEngine()
-
-# ─── الفصوص الثلاثة ───
+# ─── الذاكرة والفصوص ───
+memory       = MemoryEngine()
 chat_agent   = ChatAgent(memory)
 vision_agent = VisionAgent(memory)
 subconscious = SubconsciousAgent(memory)
 
-# ─── Keep-alive ───
+# ─── Keep-alive ───────────────────────────────
 def _keep_alive():
     while True:
         time.sleep(590)
@@ -36,10 +34,34 @@ def _keep_alive():
 if SELF_URL:
     threading.Thread(target=_keep_alive, daemon=True).start()
 
-# ─────────────────────────────────────────────
+# ─── هلوسات Whisper المعروفة ─────────────────
+WHISPER_HALLUCINATIONS = {
+    "شكرا", "شكراً", "شكرا لكم", "شكراً لكم",
+    "ترجمة", "ترجمة النص", "نانسي", "نانسي عجرم",
+    "إلى اللقاء", "وداعاً", "وداعا",
+    "thank you", "thanks", "bye", "goodbye",
+    "subtitles", "subscribe",
+}
+
+
+def _is_hallucination(text: str) -> bool:
+    t = text.strip().lower()
+    if t in {h.lower() for h in WHISPER_HALLUCINATIONS}:
+        return True
+    # نص قصير جداً ويحتوي على كلمة هلوسة
+    if len(t) < 20:
+        for h in WHISPER_HALLUCINATIONS:
+            if h.lower() in t:
+                return True
+    return False
+
+
+# ─── Routes ───────────────────────────────────
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
+
 
 @app.route('/ask_bimo', methods=['POST'])
 def ask_bimo():
@@ -60,11 +82,17 @@ def ask_bimo():
         else:
             result = chat_agent.reply(message, vision_data)
 
-        if result.get('updated_memory'):
-            memory.save(result['updated_memory'])
+        # ─── حفظ الذاكرة ───
+        updated = result.get('updated_memory', {})
+        if updated and isinstance(updated, dict):
+            memory.save(updated)
 
+        # ─── تحديث مزاج + مؤقت العقل الباطن ───
+        if result.get('emotion'):
+            memory.add_mood(result['emotion'])
         subconscious.reset_idle_timer()
 
+        # ─── نوم / مسح التاريخ ───
         sleep_kw = ["إلى اللقاء", "نوم", "أرتاح", "bye", "sleep", "مع السلامة"]
         if any(kw in message for kw in sleep_kw):
             chat_agent.clear_history()
@@ -79,6 +107,7 @@ def ask_bimo():
         traceback.print_exc()
         return jsonify({'reply': 'عذراً، عندي عطل فني.', 'emotion': 'dizzy'}), 500
 
+
 @app.route('/spontaneous', methods=['GET'])
 def spontaneous():
     """الهاتف يسأل كل 30 ثانية: هل عندك شيء تقوله؟"""
@@ -87,8 +116,10 @@ def spontaneous():
         return jsonify(result)
     return jsonify({'speak': False})
 
+
 @app.route('/transcribe', methods=['POST'])
 def transcribe_audio():
+    """تحويل الصوت إلى نص عبر Groq Whisper + فلتر هلوسات"""
     try:
         key = os.environ.get("GROQ_API_KEY_1") or os.environ.get("GROQ_API_KEY")
         if not key:
@@ -102,28 +133,28 @@ def transcribe_audio():
             headers={"Authorization": f"Bearer {key}"},
             files={'file': (f.filename, f.read(), f.content_type)},
             data={'model': 'whisper-large-v3-turbo', 'language': 'ar'},
-            timeout=15
+            timeout=15,
         )
         r.raise_for_status()
         text = r.json().get('text', '').strip()
-        
-        # 🛡️ فلتر هلوسات Whisper (يتجاهل الكلمات التي يخترعها النموذج وقت الصمت)
-        hallucinations = ["شكرا", "شكراً", "ترجمة", "نانسي", "قنقر", "إلى اللقاء", "وداعا", "وشكرا", "شكرا لكم"]
-        for h in hallucinations:
-            if text == h or text.replace(" ", "") == h or h in text and len(text) < 15:
-                print(f"🚫 تم تجاهل هلوسة Whisper: {text}")
-                return jsonify({'text': ''}) # إرجاع نص فارغ لكي لا يرد بيمو
+
+        # ─── فلتر الهلوسات ───
+        if _is_hallucination(text):
+            print(f"🚫 هلوسة Whisper تجاهلت: '{text}'")
+            return jsonify({'text': ''})
 
         print(f"🎤 {text}")
         return jsonify({'text': text})
 
     except Exception:
         traceback.print_exc()
-        return jsonify({'error': 'فشل'}), 500
+        return jsonify({'error': 'فشل التحويل'}), 500
+
 
 @app.route('/memory', methods=['GET'])
 def get_memory():
     return jsonify(memory.get())
+
 
 @app.route('/memory/reset', methods=['POST'])
 def reset_memory():
@@ -131,7 +162,9 @@ def reset_memory():
     chat_agent.clear_history()
     return jsonify({'status': 'ok'})
 
+
+# ─── Main ─────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print(f"🚀 Bimo → {port}")
+    print(f"🚀 Bimo → port {port}")
     app.run(host='0.0.0.0', port=port)

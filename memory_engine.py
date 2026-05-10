@@ -1,91 +1,97 @@
 # memory_engine.py — ذاكرة بيمو السحابية الخالدة (Firebase Edition) ☁️
+# ✅ حقول جديدة لكل الاهتمامات
 
 import firebase_admin
 from firebase_admin import credentials, db
-import os
-import json
-import time
+import os, json, time
 
-# 1. تعريف الهيكل الافتراضي للذاكرة (خارج الكلاس ليكون متاحاً للجميع)
 DEFAULT_MEMORY = {
-    "user_name": "",
-    "notes": "",
-    "favorite_game": "",
-    "favorite_anime": "",
-    "favorite_music": "",
-    "mood_history": [],
-    "last_topic": "",
-    "last_seen": "",
+    "user_name":        "",
+    "notes":            "",
+    "hobby":            "",         # ← جديد: هوايات عامة
+    "favorite_game":    "",
+    "favorite_anime":   "",
+    "favorite_music":   "",
+    "favorite_show":    "",         # ← جديد: مسلسلات / أفلام
+    "favorite_sport":   "",         # ← جديد: رياضة
+    "mood_history":     [],
+    "last_topic":       "",
+    "last_seen":        "",
+    "preferred_lang":   "arabic",   # ← جديد: اللغة المفضلة
     "relationship_level": 1,
 }
 
+
 class MemoryEngine:
     def __init__(self):
-        # تجنب تهيئة Firebase أكثر من مرة
         if not firebase_admin._apps:
             try:
-                # جلب الإعدادات من متغيرات بيئة Render
                 config_raw = os.environ.get("FIREBASE_CONFIG")
-                db_url = os.environ.get("FIREBASE_DB_URL")
-                
+                db_url     = os.environ.get("FIREBASE_DB_URL")
                 if config_raw and db_url:
-                    cred_dict = json.loads(config_raw)
-                    cred = credentials.Certificate(cred_dict)
-                    firebase_admin.initialize_app(cred, {
-                        'databaseURL': db_url
-                    })
-                    print("✅ تم الاتصال بـ Firebase بنجاح!")
+                    cred = credentials.Certificate(json.loads(config_raw))
+                    firebase_admin.initialize_app(cred, {'databaseURL': db_url})
+                    print("✅ Firebase متصل")
                 else:
-                    print("⚠️ تحذير: إعدادات Firebase غير موجودة في Environment Variables")
+                    print("⚠️ إعدادات Firebase غير موجودة")
             except Exception as e:
-                print(f"❌ فشل الاتصال بـ Firebase: {e}")
+                print(f"❌ Firebase فشل: {e}")
 
-        # المرجع الأساسي في قاعدة البيانات
         self.db_ref = db.reference("bimo_memory")
         self.memory = self._load()
 
     def _load(self) -> dict:
-        """جلب الذاكرة من السحابة عند تشغيل السيرفر"""
         try:
             data = self.db_ref.get()
             if data:
                 return {**DEFAULT_MEMORY, **data}
         except Exception as e:
-            print(f"⚠️ خطأ أثناء جلب الذاكرة: {e}")
+            print(f"⚠️ خطأ في جلب الذاكرة: {e}")
         return DEFAULT_MEMORY.copy()
 
-    # ✅ هذه هي الدالة التي يحتاجها ChatAgent و SubconsciousAgent
     def get(self) -> dict:
-        """إرجاع الذاكرة الحالية كقاموس"""
         return self.memory
 
     def save(self, new_data: dict):
-        """تحديث الذاكرة في السحابة"""
         if not new_data:
             return
-
-        # دمج البيانات الجديدة
         for key, value in new_data.items():
-            if value:
+            if value:  # لا تحفظ قيماً فارغة
                 self.memory[key] = value
 
         self.memory["last_seen"] = time.strftime("%Y-%m-%d %H:%M")
 
-        # رفع المستوى تدريجياً
-        if self.memory.get("relationship_level", 1) < 10:
-            self.memory["relationship_level"] = round(min(10, self.memory.get("relationship_level", 1) + 0.1), 2)
+        # ─── رفع مستوى العلاقة ───
+        lvl = self.memory.get("relationship_level", 1)
+        if lvl < 10:
+            self.memory["relationship_level"] = round(min(10, lvl + 0.1), 2)
+
+        # ─── كشف اللغة المفضلة ───
+        topic = new_data.get("last_topic", "")
+        if topic:
+            arabic_chars = sum(1 for c in topic if '\u0600' <= c <= '\u06FF')
+            latin_chars  = sum(1 for c in topic if c.isalpha() and c.isascii())
+            if arabic_chars > latin_chars:
+                self.memory["preferred_lang"] = "arabic"
+            elif latin_chars > arabic_chars:
+                self.memory["preferred_lang"] = "latin"
 
         try:
             self.db_ref.set(self.memory)
-            print("☁️ تمت مزامنة الذاكرة مع Firebase.")
+            print(f"☁️ الذاكرة محفوظة: {list(new_data.keys())}")
         except Exception as e:
-            print(f"❌ فشل الحفظ السحابي: {e}")
+            print(f"❌ فشل الحفظ: {e}")
+
+    def add_mood(self, mood: str):
+        history = self.memory.get("mood_history", [])
+        history.append({"mood": mood, "time": time.strftime("%H:%M")})
+        self.memory["mood_history"] = history[-5:]
+        self.save({})
 
     def reset(self):
-        """مسح الذاكرة وإعادتها للافتراض في السحابة"""
         self.memory = DEFAULT_MEMORY.copy()
         try:
             self.db_ref.set(self.memory)
-            print("🧹 تم تصقير الذاكرة السحابية بنجاح.")
+            print("🧹 الذاكرة صُفِّرت")
         except Exception as e:
-            print(f"❌ فشل مسح الذاكرة: {e}")
+            print(f"❌ فشل التصفير: {e}")
