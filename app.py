@@ -1,4 +1,4 @@
-# app.py — نفس المنطق + keep-alive لمنع نوم Render المجاني
+# app.py — سيرفر بيمو الذكي
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -20,7 +20,7 @@ SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 memory_engine = MemoryEngine()
 personality_system = PersonalitySystem()
 
-# ✅ Keep-alive: يصحي السيرفر كل 10 دقائق ليمنع نوم Render المجاني
+# ─── Keep-alive (Render المجاني) ───
 def _keep_alive():
     while True:
         time.sleep(600)
@@ -33,16 +33,17 @@ def _keep_alive():
 
 if SELF_URL:
     threading.Thread(target=_keep_alive, daemon=True).start()
-    print(f"💓 Keep-alive started → {SELF_URL}")
 else:
     print("⚠️ RENDER_EXTERNAL_URL غير مضبوطة — keep-alive معطل")
 
-# ────────────────────────────────────────────
+
+# ─── Routes ───────────────────────────────────
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
 
-# ────────────────────────────────────────────
+
 @app.route('/ask_bimo', methods=['POST'])
 def ask_bimo():
     try:
@@ -59,30 +60,38 @@ def ask_bimo():
         print(f"📩 {user_message}")
 
         current_memory = memory_engine.get_memory()
-        ai_response    = personality_system.think_and_react(
+        ai_response = personality_system.think_and_react(
             user_message, vision_data, current_memory
         )
 
         print(f"🤖 {ai_response}")
 
-        if "updated_memory" in ai_response and isinstance(ai_response["updated_memory"], dict):
-            memory_engine.save_memory(ai_response["updated_memory"])
+        # ── حفظ الذاكرة (فقط لو فيه معلومات جديدة) ──
+        updated = ai_response.get("updated_memory", {})
+        if updated and isinstance(updated, dict):
+            memory_engine.save_memory(updated)
 
-        sleep_kw = ["إلى اللقاء", "نوم", "أرتاح", "bye", "sleep"]
+        # ── تحديث تاريخ المزاج ──
+        if ai_response.get("emotion"):
+            memory_engine.add_mood(ai_response["emotion"])
+
+        # ── نوم / مسح التاريخ ──
+        sleep_kw = ["إلى اللقاء", "نوم", "أرتاح", "bye", "sleep", "مع السلامة"]
         if any(kw in user_message for kw in sleep_kw):
             personality_system.clear_history()
             print("🌙 history cleared")
 
         return jsonify({
-            'reply':   ai_response.get('reply',   'حسناً'),
-            'emotion': ai_response.get('emotion', 'idle'),
+            'reply':       ai_response.get('reply',       'حسناً'),
+            'emotion':     ai_response.get('emotion',     'idle'),
+            'face_action': ai_response.get('face_action', 'none'),
         })
 
     except Exception as e:
         traceback.print_exc()
         return jsonify({'reply': 'عذراً، عندي عطل فني.', 'emotion': 'dizzy'}), 500
 
-# ────────────────────────────────────────────
+
 @app.route('/transcribe', methods=['POST'])
 def transcribe_audio():
     """تحويل الصوت إلى نص عبر Groq Whisper"""
@@ -110,7 +119,22 @@ def transcribe_audio():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-# ────────────────────────────────────────────
+
+@app.route('/memory', methods=['GET'])
+def get_memory():
+    """نقطة لقراءة الذاكرة (للتشخيص)"""
+    return jsonify(memory_engine.get_memory())
+
+
+@app.route('/memory/reset', methods=['POST'])
+def reset_memory():
+    """إعادة ضبط الذاكرة — فقط عند الطلب الصريح"""
+    memory_engine.reset()
+    personality_system.clear_history()
+    return jsonify({'status': 'reset done'})
+
+
+# ─── Main ────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"🚀 Bimo server → port {port}")

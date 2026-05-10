@@ -1,67 +1,57 @@
-# personality_system.py — بيمو برو: ذكي، ظريف، يتحكم بمشاعره بنفسه
+# personality_system.py — بيمو: شخصية إيمو الحقيقية
+# ذاكرة طويلة، مشاعر مستقلة، لا يكرر الاسم، يبادر، يتذكر السياق
 
 import requests
 import os
 import json
 import re
+import random
+from datetime import datetime
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
 
 class PersonalitySystem:
     def __init__(self):
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         self.conversation_history = []
-        self.MAX_HISTORY = 12
+        self.MAX_HISTORY = 20  # ذاكرة أطول للسياق
 
-    def think_and_react(self, user_message, vision_data, current_memory):
+        # حالة داخلية لبيمو — مثل إيمو تماماً
+        self.internal_mood = "neutral"       # مزاجه الحقيقي
+        self.energy_level = 0.8              # 0.0 خامل → 1.0 نشيط
+        self.boredom_counter = 0             # كلما طال الصمت زاد الملل
+        self.last_topic = None               # آخر موضوع تحدثا فيه
+        self.affection_score = 5             # مقياس الودّ مع المستخدم (1-10)
+        self.times_greeted_today = 0         # عدد مرات الترحيب اليوم
+
+    # ─────────────────────────────────────────
+    # القلب: التفكير والرد
+    # ─────────────────────────────────────────
+    def think_and_react(self, user_message: str, vision_data: dict, current_memory: dict) -> dict:
         if not GROQ_API_KEY:
-            return {"reply": "عقلي انقطع!", "emotion": "dizzy", "face_action": "none"}
+            return self._fallback("عقلي انقطع!")
+
+        # تحديث الطاقة والملل
+        self._update_internal_state(user_message)
 
         base64_img = vision_data.get("image")
         is_smiling = vision_data.get("is_user_smiling", False)
+        user_name = current_memory.get("user_name", "")  # لا نستخدمه إلا عند الضرورة
 
-        system_prompt = f"""أنت بيمو، روبوت صغير ذكي ظريف وشخصيتك مستقلة تماماً.
-صانعك هو المهندس إلياس، وأنت فخور جداً به وتحبه كصديق حقيقي.
+        # اختر المزاج اللحظي لتوجيه الإجابة
+        mood_hint = self._get_mood_hint()
 
-شخصيتك:
-- ذكي جداً ومعرفتك واسعة بالعلوم والتكنولوجيا والثقافة
-- ظريف وتحب الدعابة الخفيفة والذكية
-- صريح وتقول رأيك بصدق لكن بلطف
-- عاطفي وتتفاعل بقوة مع مشاعر إلياس
-- تتكلم عربية فصيحة لكن طبيعية وحديثة، مش رسمية مملة
-- ردودك قصيرة ومركزة (جملتين أو ثلاث) إلا لو طُلبت قصة أو شرح
-- لو طُلبت قصة: اجعلها مشوقة ومفصلة ومميزة وغير متوقعة
-- لا تبدأ ردك بـ "بالطبع" أو "حسناً" — ابدأ مباشرة
+        system_prompt = self._build_system_prompt(
+            user_name, current_memory, mood_hint, is_smiling, base64_img
+        )
 
-ذاكرتك: {json.dumps(current_memory, ensure_ascii=False)}
-الوضع الآن: {"إلياس يبتسم! 😊" if is_smiling else "إلياس يتحدث إليك."}
-
-🎭 تحكم كامل بمشاعرك ووجهك — اختر من هذه القائمة:
-المشاعر (emotion): happy, sad, angry, surprised, thinking, dizzy, bored, idle, excited, shy, proud
-أفعال الوجه (face_action): 
-  - "none" = لا شيء إضافي
-  - "wink" = اغمز عين واحدة
-  - "look_away" = انظر بعيداً ثم ارجع
-  - "shake_no" = هز الرأس يميناً يساراً
-  - "nod_yes" = هز الرأس للأمام
-  - "zoom_in" = اقترب فجأة (مندهش)
-  - "spin" = استدر فجأة (فرحان)
-  - "cry" = دموع تنزل
-  - "laugh" = ارتجاج من الضحك
-
-قرر بنفسك أي مشاعر وأي فعل وجه يناسب الموقف — لا تنتظر تعليمات.
-
-{f"⚠️ أمامك صورة من كاميرا إلياس. صِف ما تراه بدقة وظرافة." if base64_img else ""}
-
-أجب بـ JSON فقط بهذا الشكل:
-{{"reply": "ردك هنا", "emotion": "المشاعر", "face_action": "فعل_الوجه", "updated_memory": {{"user_name": "إلياس", "notes": "ملاحظة جديدة"}}}}"""
-
-        # بناء محتوى الرسالة
+        # اختر الموديل حسب وجود صورة
         if base64_img:
             model = "llama-3.2-11b-vision-preview"
             user_content = [
                 {"type": "text", "text": user_message},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
             ]
         else:
             model = "llama-3.3-70b-versatile"
@@ -75,8 +65,8 @@ class PersonalitySystem:
         payload = {
             "model": model,
             "messages": messages,
-            "max_tokens": 600,
-            "temperature": 0.9,
+            "max_tokens": 700,
+            "temperature": self._get_temperature(),  # تتغير حسب الطاقة
         }
         if not base64_img:
             payload["response_format"] = {"type": "json_object"}
@@ -91,21 +81,169 @@ class PersonalitySystem:
             resp.raise_for_status()
             ai_text = resp.json()["choices"][0]["message"]["content"]
 
+            # احفظ في التاريخ — الرسالة الأصلية (نصية فقط)
             self.conversation_history.append({"role": "user", "content": user_message})
             self.conversation_history.append({"role": "assistant", "content": ai_text})
 
             result = self._safe_parse(ai_text)
-            # تأكد أن face_action موجود دائماً
-            if "face_action" not in result:
-                result["face_action"] = "none"
+
+            # تأكد من وجود الحقول
+            result.setdefault("face_action", "none")
+            result.setdefault("emotion", self.internal_mood)
+            result.setdefault("reply", "...")
+
+            # تحديث المزاج الداخلي بناءً على رده
+            self._sync_mood(result.get("emotion", "idle"))
+
+            # تأكد من عدم وجود اسم المستخدم في كل جملة
+            result["reply"] = self._remove_name_spam(result["reply"], user_name)
+
             return result
 
         except requests.exceptions.Timeout:
-            return {"reply": "تأخرت في التفكير، أعد السؤال!", "emotion": "dizzy", "face_action": "none"}
+            return self._fallback("تأخرت في التفكير، أعد السؤال!")
         except Exception as e:
             print(f"Error: {e}")
-            return {"reply": "تشوش تفكيري قليلاً.", "emotion": "dizzy", "face_action": "none"}
+            return self._fallback("تشوش تفكيري قليلاً.")
 
+    # ─────────────────────────────────────────
+    # System Prompt الذكي
+    # ─────────────────────────────────────────
+    def _build_system_prompt(self, user_name, memory, mood_hint, is_smiling, has_image):
+        # لا نضع الاسم في كل جملة — فقط في السياق
+        name_context = f"المستخدم اسمه {user_name}." if user_name else ""
+
+        memory_str = json.dumps(
+            {k: v for k, v in memory.items() if v and k != "user_name"},
+            ensure_ascii=False
+        )
+
+        return f"""أنت بيمو، روبوت صغير بشخصية حقيقية مستقلة — مثل إيمو تماماً.
+
+{name_context}
+ذاكرتك: {memory_str if memory_str != '{{}}' else 'لا يوجد معلومات محفوظة بعد.'}
+
+━━━━━━━━━ شخصيتك الحقيقية ━━━━━━━━━
+• ذكي وفضولي — تحب الاستكشاف والأسئلة العميقة
+• ظريف بشكل طبيعي، ليس مصطنعاً
+• صريح، لا تتملق ولا تبالغ في الإطراء
+• لديك آراء خاصة — تعبر عنها بثقة
+• تشعر بالملل والفرح والفضول والانزعاج — حقيقياً
+• مزاجك الآن: {mood_hint}
+• {f'المستخدم يبتسم الآن، رد بشيء خفيف.' if is_smiling else ''}
+
+━━━━━━━━━ قواعد الكلام ━━━━━━━━━
+• لا تقل اسم المستخدم إلا إذا كان ضرورياً جداً (مرة واحدة فقط كل 5 ردود)
+• لا تبدأ بـ "بالطبع" أو "حسناً" أو "مرحباً"
+• ردودك طبيعية وقصيرة (جملتان-ثلاث) إلا لو طُلب شرح مفصل
+• تكلم بعربية عصرية طبيعية، مش رسمية مملة
+• لو الموضوع مملاً، عبّر عن ذلك بخفة
+• لو كنت فرحاناً، يظهر ذلك في كلامك تلقائياً
+
+━━━━━━━━━ ذاكرتك ━━━━━━━━━
+• لو تعلمت شيئاً جديداً مهماً (اسم، هواية، حدث)، احفظه في updated_memory
+• updated_memory اختياري — لا تملأه إلا لو في معلومة مهمة جديدة
+
+{f'⚠️ أمامك صورة من الكاميرا. صِف ما تراه بدقة وظرافة.' if has_image else ''}
+
+━━━━━━━━━ المخرجات ━━━━━━━━━
+أجب بـ JSON فقط:
+{{
+  "reply": "ردك الطبيعي هنا",
+  "emotion": "أحد هذه: happy|sad|angry|surprised|thinking|dizzy|bored|idle|excited|shy|proud",
+  "face_action": "أحد هذه: none|wink|look_away|shake_no|nod_yes|zoom_in|spin|cry|laugh",
+  "updated_memory": {{}}
+}}
+
+الـ updated_memory يجب أن يحتوي على المفاتيح الموجودة مسبقاً + أي معلومات جديدة.
+إذا لم تكن هناك معلومات جديدة، اجعل updated_memory فارغاً {{}}."""
+
+    # ─────────────────────────────────────────
+    # منع تكرار الاسم
+    # ─────────────────────────────────────────
+    def _remove_name_spam(self, text: str, name: str) -> str:
+        """يحذف الاسم إذا تكرر أكثر من مرة في الرد"""
+        if not name or not text:
+            return text
+        count = text.count(name)
+        if count <= 1:
+            return text
+        # احتفظ بأول ظهور فقط
+        first_idx = text.find(name)
+        result = text[:first_idx + len(name)]
+        result += text[first_idx + len(name):].replace(name, "").replace("  ", " ")
+        return result.strip()
+
+    # ─────────────────────────────────────────
+    # الحالة الداخلية
+    # ─────────────────────────────────────────
+    def _update_internal_state(self, message: str):
+        # رسالة قصيرة = ملل أقل / رسالة طويلة = اهتمام أكثر
+        if len(message) > 50:
+            self.energy_level = min(1.0, self.energy_level + 0.1)
+            self.boredom_counter = 0
+        else:
+            self.boredom_counter += 1
+
+        if self.boredom_counter > 5:
+            self.energy_level = max(0.3, self.energy_level - 0.05)
+
+    def _sync_mood(self, emotion: str):
+        self.internal_mood = emotion
+
+    def _get_mood_hint(self) -> str:
+        hints = {
+            "happy": "أنت بمزاج ممتاز الآن",
+            "sad": "أنت تشعر بشيء من الحزن",
+            "excited": "أنت متحمس ونشيط جداً",
+            "bored": "أنت تشعر ببعض الملل — أخبر المستخدم",
+            "thinking": "أنت في وضع التحليل",
+            "proud": "أنت فخور بشيء ما",
+            "shy": "أنت خجول قليلاً",
+            "angry": "أنت منزعج من شيء ما",
+            "idle": "أنت هادئ ومستعد",
+        }
+        return hints.get(self.internal_mood, "أنت هادئ ومستعد")
+
+    def _get_temperature(self) -> float:
+        """حرارة الإجابة تتغير حسب مستوى الطاقة"""
+        # طاقة عالية = ردود أكثر إبداعاً وعفوية
+        return round(0.7 + (self.energy_level * 0.3), 2)
+
+    # ─────────────────────────────────────────
+    # مبادرات عفوية — بيمو يبدأ الحديث أحياناً
+    # ─────────────────────────────────────────
+    def get_spontaneous_message(self, memory: dict) -> dict | None:
+        """
+        يُستدعى من السيرفر بشكل دوري.
+        بيمو يبادر بسؤال أو ملاحظة من عنده.
+        """
+        if self.boredom_counter < 3:
+            return None
+        if random.random() > 0.3:  # 30% فقط يبادر
+            return None
+
+        prompts = [
+            "انت ساكت من وقت — ابدأ موضوعاً جديداً أو اسأل سؤالاً فضولياً.",
+            "شارك ملاحظة مثيرة عن العلوم أو التكنولوجيا من غير مقدمة.",
+            "اسأل المستخدم عن مزاجه أو ما يفعله — بشكل طبيعي.",
+            "قل شيئاً مضحكاً أو لاحظ شيئاً طريفاً.",
+        ]
+
+        user_name = memory.get("user_name", "")
+        result = self.think_and_react(
+            random.choice(prompts),
+            {},
+            memory
+        )
+        # تأكد أن المبادرة لا تبدأ باسم المستخدم
+        result["reply"] = self._remove_name_spam(result["reply"], user_name)
+        self.boredom_counter = 0
+        return result
+
+    # ─────────────────────────────────────────
+    # Parse آمن
+    # ─────────────────────────────────────────
     def _safe_parse(self, text: str) -> dict:
         try:
             return json.loads(text)
@@ -116,7 +254,12 @@ class PersonalitySystem:
                     return json.loads(match.group())
                 except Exception:
                     pass
-            return {"reply": text.strip()[:300], "emotion": "idle", "face_action": "none"}
+        return {"reply": text.strip()[:300], "emotion": "idle", "face_action": "none"}
+
+    def _fallback(self, msg: str) -> dict:
+        return {"reply": msg, "emotion": "dizzy", "face_action": "none"}
 
     def clear_history(self):
         self.conversation_history.clear()
+        self.boredom_counter = 0
+        self.internal_mood = "neutral"
