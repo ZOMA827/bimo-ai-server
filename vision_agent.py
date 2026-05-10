@@ -1,12 +1,13 @@
 # vision_agent.py — الفص الثاني: وكيل الرؤية
-# النموذج: llama-3.2-11b-vision-preview | المفتاح: GROQ_API_KEY_2
-# لا يتدخل إطلاقاً إلا إذا وُجدت صورة
+# ✅ تم التحديث إلى النموذج الجديد بعد إيقاف القديم
+# النموذج الجديد: llama-3.2-90b-vision-preview
 
 import os, json, re, requests
 
 KEY   = os.environ.get("GROQ_API_KEY_2") or os.environ.get("GROQ_API_KEY")
 URL   = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "llama-3.2-11b-vision-preview"
+# 🔥 التحديث هنا: استخدام النموذج العملاق الجديد للرؤية بدلاً من القديم المحذوف
+MODEL = "llama-3.2-90b-vision-preview"
 
 class VisionAgent:
     def __init__(self, memory):
@@ -36,11 +37,10 @@ class VisionAgent:
 أجب بـ JSON فقط:
 {{"reply": "...", "emotion": "...", "face_action": "...", "updated_memory": {{}}}}"""
 
-        # 🔥 التعديل الحاسم: نموذج الرؤية في Groq يرفض الـ system message تماماً
-        # لذلك يجب وضع التوجيهات كلها داخل الـ user message مع الصورة
+        # دمج رسالة النظام مع رسالة المستخدم لأن نموذج الرؤية يرفض دور System
         full_text_prompt = f"{system_prompt}\n\n[رسالة المستخدم]: {message}"
 
-        # تنظيف مسار الصورة للتأكد من عدم وجود مسافات خفية تسبب خطأ 400
+        # تنظيف مسار الصورة
         clean_b64 = image_b64.replace('\n', '').replace('\r', '').strip()
         image_url = f"data:image/jpeg;base64,{clean_b64}"
 
@@ -84,7 +84,6 @@ class VisionAgent:
             if m:
                 try: return json.loads(m.group())
                 except Exception: pass
-            # لو ما قدر يـparse، ارجع النص مباشرة
             return {"reply": text.strip()[:300], "emotion": "thinking", "face_action": "none"}
 
     def _headers(self):
