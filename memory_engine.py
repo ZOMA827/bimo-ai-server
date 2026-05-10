@@ -1,78 +1,62 @@
-# memory_engine.py — ذاكرة بيمو الحقيقية
+# memory_engine.py — الذاكرة المشتركة بين الفصوص الثلاثة
 
-import json
-import os
-import time
+import json, os, time
 
-MEMORY_FILE = "memory.json"
+FILE = "memory.json"
 
-DEFAULT_MEMORY = {
-    "user_name": "",
-    "notes": "",
-    "favorite_game": "",
-    "favorite_anime": "",
-    "favorite_music": "",
-    "mood_history": [],       # آخر 5 مزاجيات
-    "last_topic": "",
-    "last_seen": "",
-    "relationship_level": 1,  # 1=جديد → 10=صديق حقيقي
+DEFAULT = {
+    "user_name":         "",
+    "notes":             "",
+    "favorite_game":     "",
+    "favorite_anime":    "",
+    "favorite_music":    "",
+    "last_topic":        "",
+    "last_seen":         "",
+    "mood_history":      [],
+    "relationship_level": 1,
 }
-
 
 class MemoryEngine:
     def __init__(self):
-        self.memory = self._load()
+        self._data = self._load()
+        self._lock = __import__('threading').Lock()
 
     def _load(self) -> dict:
-        if os.path.exists(MEMORY_FILE):
+        if os.path.exists(FILE):
             try:
-                with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                    # دمج مع الافتراضي لضمان وجود كل المفاتيح
-                    merged = {**DEFAULT_MEMORY, **loaded}
-                    return merged
+                with open(FILE, "r", encoding="utf-8") as f:
+                    return {**DEFAULT, **json.load(f)}
             except Exception:
                 pass
-        return DEFAULT_MEMORY.copy()
+        return DEFAULT.copy()
 
-    def save_memory(self, new_data: dict):
-        """يدمج البيانات الجديدة مع الموجودة ويحفظ"""
-        if not new_data:
-            return
+    def get(self) -> dict:
+        with self._lock:
+            return dict(self._data)
 
-        # لا تمسح الذاكرة القديمة — ادمجها
-        for key, value in new_data.items():
-            if value:  # لا تحفظ قيماً فارغة
-                self.memory[key] = value
-
-        # تحديث وقت آخر تحدث
-        self.memory["last_seen"] = time.strftime("%Y-%m-%d %H:%M")
-
-        # ارفع مستوى العلاقة تدريجياً
-        if self.memory.get("relationship_level", 1) < 10:
-            self.memory["relationship_level"] = min(
-                10,
-                self.memory.get("relationship_level", 1) + 0.1
-            )
-
-        try:
-            with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.memory, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"Memory save error: {e}")
+    def save(self, new_data: dict):
+        with self._lock:
+            for k, v in new_data.items():
+                if v:
+                    self._data[k] = v
+            self._data["last_seen"] = time.strftime("%Y-%m-%d %H:%M")
+            lvl = self._data.get("relationship_level", 1)
+            self._data["relationship_level"] = round(min(10, lvl + 0.05), 2)
+            try:
+                with open(FILE, "w", encoding="utf-8") as f:
+                    json.dump(self._data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"Memory save error: {e}")
 
     def add_mood(self, mood: str):
-        """يضيف مزاج للتاريخ (آخر 5 فقط)"""
-        history = self.memory.get("mood_history", [])
-        history.append({"mood": mood, "time": time.strftime("%H:%M")})
-        self.memory["mood_history"] = history[-5:]
-        self.save_memory({})
-
-    def get_memory(self) -> dict:
-        return self.memory
+        with self._lock:
+            h = self._data.get("mood_history", [])
+            h.append({"mood": mood, "t": time.strftime("%H:%M")})
+            self._data["mood_history"] = h[-5:]
+        self.save({})
 
     def reset(self):
-        """إعادة ضبط كاملة — تُستخدم فقط عند الطلب الصريح"""
-        self.memory = DEFAULT_MEMORY.copy()
-        if os.path.exists(MEMORY_FILE):
-            os.remove(MEMORY_FILE)
+        with self._lock:
+            self._data = DEFAULT.copy()
+            if os.path.exists(FILE):
+                os.remove(FILE)

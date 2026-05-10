@@ -1,141 +1,129 @@
-# app.py — سيرفر بيمو الذكي
+# app.py — بيمو برو: ثلاثة فصوص (Agents) + ذاكرة مشتركة
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os
-import traceback
-import threading
-import time
-import requests as req_lib
+import os, traceback, threading, time, requests as req_lib
 
 from memory_engine import MemoryEngine
-from personality_system import PersonalitySystem
+from chat_agent import ChatAgent
+from vision_agent import VisionAgent
+from subconscious_agent import SubconsciousAgent
 
 app = Flask(__name__)
 CORS(app)
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
-memory_engine = MemoryEngine()
-personality_system = PersonalitySystem()
+# ─── الذاكرة المشتركة ───
+memory = MemoryEngine()
 
-# ─── Keep-alive (Render المجاني) ───
+# ─── الفصوص الثلاثة ───
+chat_agent   = ChatAgent(memory)
+vision_agent = VisionAgent(memory)
+subconscious = SubconsciousAgent(memory)
+
+# ─── Keep-alive ───
 def _keep_alive():
     while True:
-        time.sleep(600)
+        time.sleep(590)
         if SELF_URL:
             try:
-                req_lib.get(f"{SELF_URL}/health", timeout=10)
+                req_lib.get(f"{SELF_URL}/health", timeout=8)
                 print("💓 keep-alive OK")
             except Exception as e:
-                print(f"💔 keep-alive failed: {e}")
+                print(f"💔 {e}")
 
 if SELF_URL:
     threading.Thread(target=_keep_alive, daemon=True).start()
-else:
-    print("⚠️ RENDER_EXTERNAL_URL غير مضبوطة — keep-alive معطل")
 
-
-# ─── Routes ───────────────────────────────────
-
+# ─────────────────────────────────────────────
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
 
-
 @app.route('/ask_bimo', methods=['POST'])
 def ask_bimo():
     try:
-        req_data = request.json
-        if not req_data:
-            return jsonify({'reply': 'ما وصلتني بيانات!', 'emotion': 'dizzy'}), 400
+        data        = request.json or {}
+        message     = data.get('message', '').strip()
+        vision_data = data.get('vision', {})
 
-        user_message = req_data.get('message', '').strip()
-        vision_data  = req_data.get('vision', {})
-
-        if not user_message:
+        if not message:
             return jsonify({'reply': 'لم أسمع شيئاً.', 'emotion': 'idle'})
 
-        print(f"📩 {user_message}")
+        print(f"📩 {message}")
+        image_b64 = vision_data.get('image')
 
-        current_memory = memory_engine.get_memory()
-        ai_response = personality_system.think_and_react(
-            user_message, vision_data, current_memory
-        )
+        # ─── توجيه ذكي ───
+        if image_b64:
+            result = vision_agent.analyze(message, image_b64)
+        else:
+            result = chat_agent.reply(message, vision_data)
 
-        print(f"🤖 {ai_response}")
+        if result.get('updated_memory'):
+            memory.save(result['updated_memory'])
 
-        # ── حفظ الذاكرة (فقط لو فيه معلومات جديدة) ──
-        updated = ai_response.get("updated_memory", {})
-        if updated and isinstance(updated, dict):
-            memory_engine.save_memory(updated)
+        subconscious.reset_idle_timer()
 
-        # ── تحديث تاريخ المزاج ──
-        if ai_response.get("emotion"):
-            memory_engine.add_mood(ai_response["emotion"])
-
-        # ── نوم / مسح التاريخ ──
         sleep_kw = ["إلى اللقاء", "نوم", "أرتاح", "bye", "sleep", "مع السلامة"]
-        if any(kw in user_message for kw in sleep_kw):
-            personality_system.clear_history()
-            print("🌙 history cleared")
+        if any(kw in message for kw in sleep_kw):
+            chat_agent.clear_history()
 
         return jsonify({
-            'reply':       ai_response.get('reply',       'حسناً'),
-            'emotion':     ai_response.get('emotion',     'idle'),
-            'face_action': ai_response.get('face_action', 'none'),
+            'reply':       result.get('reply',       'حسناً'),
+            'emotion':     result.get('emotion',     'idle'),
+            'face_action': result.get('face_action', 'none'),
         })
 
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         return jsonify({'reply': 'عذراً، عندي عطل فني.', 'emotion': 'dizzy'}), 500
 
+@app.route('/spontaneous', methods=['GET'])
+def spontaneous():
+    """الهاتف يسأل كل 30 ثانية: هل عندك شيء تقوله؟"""
+    result = subconscious.get_spontaneous()
+    if result:
+        return jsonify(result)
+    return jsonify({'speak': False})
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe_audio():
-    """تحويل الصوت إلى نص عبر Groq Whisper"""
     try:
-        if not GROQ_API_KEY:
+        key = os.environ.get("GROQ_API_KEY_1") or os.environ.get("GROQ_API_KEY")
+        if not key:
             return jsonify({'error': 'GROQ_API_KEY مفقود'}), 500
-
         if 'file' not in request.files:
-            return jsonify({'error': 'لا يوجد ملف صوتي'}), 400
+            return jsonify({'error': 'لا يوجد ملف'}), 400
 
         f = request.files['file']
-        url     = "https://api.groq.com/openai/v1/audio/transcriptions"
-        headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
-        files   = {'file': (f.filename, f.read(), f.content_type)}
-        data    = {'model': 'whisper-large-v3-turbo', 'language': 'ar'}
-
-        r = req_lib.post(url, headers=headers, files=files, data=data, timeout=15)
+        r = req_lib.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {key}"},
+            files={'file': (f.filename, f.read(), f.content_type)},
+            data={'model': 'whisper-large-v3-turbo', 'language': 'ar'},
+            timeout=15
+        )
         r.raise_for_status()
-
         text = r.json().get('text', '').strip()
-        print(f"🎤 Whisper: {text}")
+        print(f"🎤 {text}")
         return jsonify({'text': text})
 
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
+        return jsonify({'error': 'فشل'}), 500
 
 @app.route('/memory', methods=['GET'])
 def get_memory():
-    """نقطة لقراءة الذاكرة (للتشخيص)"""
-    return jsonify(memory_engine.get_memory())
-
+    return jsonify(memory.get())
 
 @app.route('/memory/reset', methods=['POST'])
 def reset_memory():
-    """إعادة ضبط الذاكرة — فقط عند الطلب الصريح"""
-    memory_engine.reset()
-    personality_system.clear_history()
-    return jsonify({'status': 'reset done'})
+    memory.reset()
+    chat_agent.clear_history()
+    return jsonify({'status': 'ok'})
 
-
-# ─── Main ────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print(f"🚀 Bimo server → port {port}")
+    print(f"🚀 Bimo → {port}")
     app.run(host='0.0.0.0', port=port)
