@@ -1,6 +1,4 @@
-# personality_system.py — بيمو برو: ذكي، متعدد اللغات، شخصية إيمو الحقيقية
-# ✅ حذف mishkal (تسبب مشاكل) — استبدال بـ prompt أفضل
-# ✅ متعدد اللغات: يرد بنفس لغة المستخدم تلقائياً
+# personality_system.py — بيمو برو: إصلاح استهلاك الكلمات (Rate Limits) وحدود Groq
 
 import requests
 import os
@@ -15,7 +13,8 @@ class PersonalitySystem:
     def __init__(self):
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         self.conversation_history = []
-        self.MAX_HISTORY = 16
+        # ✅ 1. تقليل تاريخ المحادثة لتخفيف الضغط على السيرفر (6 رسائل تكفي جداً للسياق)
+        self.MAX_HISTORY = 6
 
         # الحالة الداخلية لبيمو
         self.internal_mood  = "idle"
@@ -30,6 +29,7 @@ class PersonalitySystem:
 
         # رسالة نظام داخلية (صمت المستخدم)
         if "[IDLE]" in user_message:
+            self.boredom_count += 1 # ✅ 4. زيادة الملل فعلياً عندما يصمت المستخدم
             return self._spontaneous(memory)
 
         self._tick(user_message)
@@ -39,10 +39,8 @@ class PersonalitySystem:
 
         system_prompt = self._build_prompt(memory, is_smiling, bool(base64_img))
 
-        # نموذج الرؤية vs نموذج النصوص
         if base64_img:
             model   = "llama-3.2-11b-vision-preview"
-            # Vision لا يدعم system role — ندمجهما
             content = [
                 {"type": "text", "text": f"{system_prompt}\n\nUser: {user_message}"},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
@@ -59,7 +57,8 @@ class PersonalitySystem:
         payload = {
             "model": model,
             "messages": messages,
-            "max_tokens": 1200,
+            # ✅ 2. تقليل الحد الأقصى للكلمات المحجوزة لحماية حسابك المجاني من الحظر (TPM Limit)
+            "max_tokens": 500,
             "temperature": round(0.75 + self.energy_level * 0.25, 2),
         }
         if not base64_img:
@@ -72,7 +71,7 @@ class PersonalitySystem:
                 json=payload,
                 timeout=25,
             )
-            r.raise_for_status()
+            r.raise_for_status() # هذا السطر يطلق الخطأ إذا قام Groq بحظرك
             ai_text = r.json()["choices"][0]["message"]["content"]
 
             self.conversation_history.append({"role": "user",      "content": user_message})
@@ -84,7 +83,6 @@ class PersonalitySystem:
             result.setdefault("reply",          "...")
             result.setdefault("updated_memory", {})
 
-            # تنظيف تكرار الاسم
             name = memory.get("user_name", "")
             if name:
                 result["reply"] = self._dedupe_name(result["reply"], name)
@@ -94,11 +92,16 @@ class PersonalitySystem:
 
             return result
 
-        except requests.Timeout:
+        # ✅ 3. اصطياد الأخطاء بشفافية لمعرفة السبب الحقيقي
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                return self._fb("لقد تجاوزنا الحد المسموح للكلمات في الدقيقة! دعني أرتاح لثوانٍ معدودة.")
+            return self._fb(f"خطأ في سيرفر الذكاء الاصطناعي: {e.response.status_code}")
+        except requests.exceptions.Timeout:
             return self._fb("تأخرت في التفكير، أعد السؤال!")
         except Exception as e:
             print(f"PersonalitySystem error: {e}")
-            return self._fb("تشوش تفكيري.")
+            return self._fb("حدث خطأ غير متوقع في عقلي.")
 
     # ──────────────────────────────────────────────────────
     def _build_prompt(self, memory: dict, is_smiling: bool, has_image: bool) -> str:
@@ -132,25 +135,19 @@ class PersonalitySystem:
 
 ━━━ اللغات ━━━
 • اكتشف لغة المستخدم تلقائياً وارد بنفس اللغة.
-• إذا تكلم بالعربية: رد بعربية طبيعية حديثة (مش رسمية جداً).
+• إذا تكلم بالعربية: رد بعربية طبيعية حديثة.
 • إذا تكلم بالإنجليزية: رد بالإنجليزية.
 • إذا تكلم بلغة أخرى: رد بنفسها. لا تعتذر عن اللغة أبداً.
 
 ━━━ أسلوب الرد ━━━
 • سؤال بسيط → رد طبيعي مختصر (2-3 جمل).
 • قصة/شرح/رأي/نقاش → رد مطول غني بالتفاصيل والمشاعر.
-• لا تقطع القصص — أكملها دائماً بشكل ممتع.
 
 ━━━ الوضع الحالي ━━━
 • مزاجك: {self.internal_mood} | طاقتك: {int(self.energy_level*100)}%
 • {smile_note}
 • ذاكرتك: {mem_str}
 {vision_block}
-
-━━━ المشاعر وأفعال الوجه ━━━
-اختر بنفسك ما يناسب:
-emotion: happy|sad|angry|surprised|thinking|dizzy|bored|idle|excited|shy|proud
-face_action: none|wink|look_away|shake_no|nod_yes|zoom_in|spin|cry|laugh
 
 ━━━ المخرج ━━━
 JSON فقط بدون أي نص خارجه:
