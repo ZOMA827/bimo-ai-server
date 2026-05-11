@@ -1,21 +1,21 @@
 # subconscious_agent.py — الفص الثالث: العقل الباطن الاستباقي الشامل
-# ✅ يبحث عن كل الاهتمامات (أنمي، ألعاب، موسيقى، مسلسلات، رياضة...)
-# ✅ يبادر بطريقة طبيعية وعفوية — لا يكشف أنه "عقل باطن"
+# ✅ يتوقف عن العمل تلقائياً إذا كان التطبيق مغلقاً لأكثر من 5 دقائق لتوفير الموارد!
 
 import os, json, re, time, random, threading, requests
 from datetime import datetime
 
 KEY   = os.environ.get("GROQ_API_KEY_3") or os.environ.get("GROQ_API_KEY")
-URL   = "https://api.groq.com/openai/v1/chat/completions"
+URL   = "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)"
 MODEL = "llama-3.1-8b-instant"
 
 IDLE_THRESHOLD = 75   # ثانية صمت قبل التفكير
+MAX_OFFLINE    = 300  # 🔥 5 دقائق (300 ثانية): إذا زاد الوقت عن هذا، نعتبر التطبيق مغلقاً ونتوقف
 REPEAT_EVERY   = 90   # ثانية بين مبادرة وأخرى
 
 # ─── قواميس البحث الخارجي ───
 INTEREST_APIS = {
     "favorite_anime": {
-        "url": "https://api.jikan.moe/v4/anime?q={query}&limit=1",
+        "url": "[https://api.jikan.moe/v4/anime?q=](https://api.jikan.moe/v4/anime?q=){query}&limit=1",
         "extract": lambda d: {
             "status":   d[0].get("status", ""),
             "episodes": d[0].get("episodes", "?"),
@@ -25,8 +25,7 @@ INTEREST_APIS = {
         "field": "data",
     },
     "favorite_game": {
-        "url": "https://api.rawg.io/api/games?key=&search={query}&page_size=1",
-        # RAWG بدون مفتاح يرجع نتائج محدودة لكن مفيدة
+        "url": "[https://api.rawg.io/api/games?key=&search=](https://api.rawg.io/api/games?key=&search=){query}&page_size=1",
         "extract": lambda d: {
             "rating":   d[0].get("rating", ""),
             "released": d[0].get("released", ""),
@@ -35,7 +34,7 @@ INTEREST_APIS = {
         "field": "results",
     },
     "favorite_music": {
-        "url": "https://itunes.apple.com/search?term={query}&media=music&limit=1",
+        "url": "[https://itunes.apple.com/search?term=](https://itunes.apple.com/search?term=){query}&media=music&limit=1",
         "extract": lambda d: {
             "artist":    d[0].get("artistName", ""),
             "album":     d[0].get("collectionName", ""),
@@ -44,17 +43,16 @@ INTEREST_APIS = {
         "field": "results",
     },
     "favorite_show": {
-        "url": "https://api.tvmaze.com/search/shows?q={query}",
+        "url": "[https://api.tvmaze.com/search/shows?q=](https://api.tvmaze.com/search/shows?q=){query}",
         "extract": lambda d: {
             "status":  d[0]["show"].get("status", ""),
             "network": (d[0]["show"].get("network") or {}).get("name", ""),
             "rating":  (d[0]["show"].get("rating") or {}).get("average", ""),
         } if d else None,
-        "field": None,  # الـ response مباشرة list
+        "field": None,
     },
 }
 
-# رسائل المبادرة حسب نوع الاهتمام
 INITIATIVE_TEMPLATES = {
     "favorite_anime": [
         "بحثت عن {name} — حالته '{status}' وعدد حلقاته {episodes}. شو رأيك فيه؟",
@@ -82,7 +80,6 @@ INITIATIVE_TEMPLATES = {
     ],
 }
 
-# مبادرات افتراضية لو ما في اهتمامات محفوظة
 GENERIC_INITIATIVES = [
     "اسأل سؤالاً فضولياً عن حياة المستخدم أو يومه",
     "شارك حقيقة علمية أو تقنية مثيرة للاهتمام بشكل غير رسمي",
@@ -102,7 +99,6 @@ class SubconsciousAgent:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
-    # ─── واجهة السيرفر ───────────────────────
     def get_spontaneous(self) -> dict | None:
         with self._lock:
             msg = self._pending
@@ -114,28 +110,36 @@ class SubconsciousAgent:
         with self._lock:
             self._pending = None
 
-    # ─── حلقة الخلفية ────────────────────────
     def _loop(self):
         while True:
             time.sleep(10)
-            if time.time() - self._last_active < IDLE_THRESHOLD:
+            idle_time = time.time() - self._last_active
+            
+            # 🔥 إذا كان التطبيق مغلقاً لأكثر من 5 دقائق، يدخل السيرفر في سبات ولن يبحث!
+            if idle_time > MAX_OFFLINE:
                 continue
+                
+            # إذا لم يمر وقت الملل (75 ثانية) ننتظر
+            if idle_time < IDLE_THRESHOLD:
+                continue
+                
             with self._lock:
                 if self._pending:
                     continue
+            
             result = self._think_and_generate()
             if result:
                 with self._lock:
                     self._pending = result
                 time.sleep(REPEAT_EVERY)
 
-    # ─── التفكير والتوليد ────────────────────
     def _think_and_generate(self) -> dict | None:
+        if not KEY: return None
+        
         mem  = self.memory.get()
         name = mem.get("user_name", "")
         rel  = mem.get("relationship_level", 1)
 
-        # ─── البحث عن أي اهتمام محفوظ ───
         interest_prompt, web_info = self._research_interest(mem)
 
         if interest_prompt:
@@ -180,17 +184,8 @@ class SubconsciousAgent:
             print(f"SubconsciousAgent error: {e}")
             return None
 
-    # ─── بحث خارجي شامل ─────────────────────
     def _research_interest(self, mem: dict):
-        """يبحث عن أي اهتمام محفوظ ويرجع (prompt, web_info)"""
-
-        # الاهتمامات بالأولوية
-        priority_keys = [
-            "favorite_anime", "favorite_game", "favorite_music",
-            "favorite_show", "favorite_sport", "hobby",
-        ]
-
-        # اختر اهتماماً عشوائياً من المحفوظات
+        priority_keys = ["favorite_anime", "favorite_game", "favorite_music", "favorite_show", "favorite_sport", "hobby"]
         available = [(k, mem.get(k)) for k in priority_keys if mem.get(k)]
         if not available:
             return None, None
@@ -199,8 +194,6 @@ class SubconsciousAgent:
         print(f"🔍 العقل الباطن يبحث عن: {key} = {value}")
 
         web_info = None
-
-        # ─── بحث خارجي ───
         api_config = INTEREST_APIS.get(key)
         if api_config:
             try:
@@ -216,11 +209,9 @@ class SubconsciousAgent:
             except Exception as e:
                 print(f"⚠️ فشل البحث الخارجي: {e}")
 
-        # ─── اختر قالب المبادرة ───
         templates = INITIATIVE_TEMPLATES.get(key, [])
         if templates:
             template = random.choice(templates)
-            # حاول تعبئة القالب
             try:
                 info_dict = json.loads(web_info) if web_info else {}
                 info_dict["name"] = value
@@ -239,10 +230,8 @@ class SubconsciousAgent:
         except Exception:
             m = re.search(r'\{.*\}', text, re.DOTALL)
             if m:
-                try:
-                    return json.loads(m.group())
-                except Exception:
-                    pass
+                try: return json.loads(m.group())
+                except Exception: pass
         return {"reply": text.strip()[:200]}
 
     def _headers(self):

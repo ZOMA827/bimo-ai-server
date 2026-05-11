@@ -1,7 +1,6 @@
 # chat_agent.py — الفص الأول: العقل المدبر J.A.R.V.I.S 🧠 (إصدار مايو 2026)
 # ✅ حرية مطلقة في اتخاذ القرار (دردشة، بحث، يوتيوب، كاميرا).
-# ✅ متوافق 100% مع معمارية app.py و main.dart.
-# ✅ يعتمد على Gemini 2.5 Flash الأحدث والأسرع.
+# ✅ تبديل تلقائي واحترافي إلى Groq (Llama-3.3-70b) إذا تعطل Gemini.
 
 import os, json, re, requests, urllib.parse
 import google.generativeai as genai
@@ -10,6 +9,7 @@ import google.generativeai as genai
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") 
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY") 
+GROQ_API_KEY   = os.environ.get("GROQ_API_KEY_1") or os.environ.get("GROQ_API_KEY") # 👈 مفتاح جروق للطوارئ
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -17,7 +17,6 @@ if GEMINI_API_KEY:
 # ─── حواس بيمو (الأدوات الذاتية) ───
 
 def tavily_search(query: str, need_image: bool = False) -> dict:
-    """استخدم هذه الأداة بقرارك الخاص للبحث في الإنترنت عن أخبار، معلومات، طقس، تحميل ألعاب، أو صور."""
     print(f"🌍 بيمو قرر البحث في الإنترنت عن: {query}")
     result = {"url": "", "image_url": "", "title": ""}
     if not TAVILY_API_KEY: return result
@@ -36,7 +35,6 @@ def tavily_search(query: str, need_image: bool = False) -> dict:
     return result
 
 def youtube_search(query: str) -> dict:
-    """استخدم هذه الأداة بقرارك الخاص لتشغيل فيديو أو أغنية من يوتيوب حصراً."""
     print(f"🎬 بيمو قرر البحث في يوتيوب عن: {query}")
     if not GOOGLE_API_KEY: return {"error": "مفتاح جوجل مفقود"}
     try:
@@ -49,7 +47,6 @@ def youtube_search(query: str) -> dict:
     return {"error": "لم أجد الفيديو."}
 
 def activate_visual_cortex() -> dict:
-    """أداة خطيرة: استخدمها فوراً وبدون تردد إذا طلب منك المستخدم أن 'تراه'، 'تنظر إليه'، 'تصف ملابسه'، أو 'تصف ما أمامه'."""
     print("📸 بيمو يقرر فتح عينه (تفعيل الكاميرا)")
     return {"action": "camera_triggered", "instruction": "You MUST set 'ui_action' to 'take_photo' in the final JSON response."}
 
@@ -60,45 +57,49 @@ class ChatAgent:
         self.chat_session = None
 
     def _init_chat(self, system_instruction):
-        # 🔥 أحدث جيل من جوجل لعام 2026: gemini-2.5-flash
+        if not GEMINI_API_KEY: return
         try:
             model = genai.GenerativeModel(
                 model_name="gemini-2.5-flash",
                 system_instruction=system_instruction,
                 tools=[tavily_search, youtube_search, activate_visual_cortex],
                 generation_config=genai.GenerationConfig(
-                    temperature=0.7, # حرارة ممتازة للابداع واتخاذ القرار
+                    temperature=0.7,
                     response_mime_type="application/json" 
                 )
             )
         except Exception:
-            # خطة طوارئ بديلة
             model = genai.GenerativeModel(
                 model_name="gemini-2.0-flash",
                 system_instruction=system_instruction,
                 tools=[tavily_search, youtube_search, activate_visual_cortex],
                 generation_config=genai.GenerationConfig(response_mime_type="application/json")
             )
-            
         self.chat_session = model.start_chat(enable_automatic_function_calling=True)
 
     def reply(self, message: str, vision_data: dict = {}) -> dict:
-        if not GEMINI_API_KEY: return self._err("مفتاح Gemini مفقود في السيرفر!")
-
         mem = self.memory.get()
         system = self._build_system(mem)
 
-        if not self.chat_session:
-            self._init_chat(system)
-
-        try:
-            # إعطاء الحرية المطلقة لـ Gemini لفهم الطلب، استخدام الأدوات، وتوليد الرد
-            response = self.chat_session.send_message(message)
-            text = response.text
-        except Exception as e:
-            print(f"⚠️ انهيار في القشرة الدماغية (Gemini Error): {e}")
-            self.chat_session = None # إعادة ضبط العقل في حال الخطأ
-            return self._err("أعصابي مشدودة قليلاً، هل يمكنك إرسال الطلب مرة أخرى؟")
+        # محاولة استخدام Gemini أولاً
+        text = None
+        if GEMINI_API_KEY:
+            if not self.chat_session:
+                self._init_chat(system)
+            try:
+                response = self.chat_session.send_message(message)
+                text = response.text
+            except Exception as e:
+                print(f"⚠️ انهيار في Gemini ({e}). سيتم التبديل إلى العقل الاحتياطي (Groq)...")
+                self.chat_session = None # إعادة ضبط للتهيئة القادمة
+        
+        # إذا تعطل Gemini أو لم يكن المفتاح موجوداً، نستخدم Groq فوراً!
+        if not text:
+            if GROQ_API_KEY:
+                print("🔄 بيمو يستخدم Groq Llama 3.3 للرد...")
+                text = self._reply_with_groq(message, system)
+            else:
+                return self._err("أعصابي مشدودة ومفاتيحي مفقودة، هل يمكنك المحاولة لاحقاً؟")
 
         result = self._parse(text)
 
@@ -107,12 +108,33 @@ class ChatAgent:
             result.setdefault(key, "none" if "action" in key else ("idle" if key == "emotion" else ""))
         result.setdefault("updated_memory", {})
 
-        # تنظيف اسم المستخدم من الردود لتكون طبيعية
         name = mem.get("user_name", "")
         result["reply"] = self._clean_name(result.get("reply", "تم الأمر."), name)
 
-        print(f"🤖 بيمو (القرار الحر): {result['reply'][:80]}")
+        print(f"🤖 بيمو: {result['reply'][:80]}")
         return result
+
+    # ─── العقل الاحتياطي (Groq) ───
+    def _reply_with_groq(self, message: str, system_prompt: str) -> str:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "llama-3.3-70b-versatile", # أحدث وأقوى موديل مجاني على Groq
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message}
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.7,
+            "max_tokens": 300
+        }
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=12)
+            res.raise_for_status()
+            return res.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"⚠️ فشل العقل الاحتياطي Groq أيضاً: {e}")
+            return '{"reply": "رأسي يؤلمني، كل شبكاتي العصبية مشغولة!", "emotion": "dizzy", "face_action": "none"}'
 
     def _build_system(self, mem: dict) -> str:
         name = mem.get("user_name", "")
@@ -155,11 +177,24 @@ class ChatAgent:
 
     def _parse(self, text: str) -> dict:
         text = text.strip()
-        # تنظيف أي ماركداون قد يهلوس به الذكاء الاصطناعي
         if text.startswith('```'):
             text = re.sub(r'^```json\s*|```$', '', text, flags=re.DOTALL).strip()
         try:
             return json.loads(text)                                                                                                                                                                                                     
         except json.JSONDecodeError:
             print(f"⚠️ خطأ في تحليل JSON: {text}")
-            return {"reply": "عذراً، حدث خطأ في معالجة طلبك."}
+            return {"reply": "عذراً، حدث خطأ في معالجة طلبك.", "emotion": "dizzy"}
+            
+    # ✅ وضعنا الدالة هنا بشكل صحيح داخل الكلاس
+    def _err(self, msg: str) -> dict:
+        """دالة الطوارئ عندما تفشل جميع العقول في الرد"""
+        return {
+            "reply": msg,
+            "emotion": "dizzy",
+            "face_action": "none",
+            "ui_action": "none",
+            "media_url": "",
+            "image_url": "",
+            "media_title": "",
+            "updated_memory": {}
+        }
