@@ -4,3 +4,4 @@ requests
 gunicorn
 firebase-admin
 duckduckgo-search
+google-generativeai
