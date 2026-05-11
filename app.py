@@ -13,12 +13,16 @@ app = Flask(__name__)
 CORS(app)
 
 SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+# 🔥 هنا نحدد دور السيرفر (افتراضياً ALL لكي يعمل على حاسوبك أثناء التجربة)
+SERVER_ROLE = os.environ.get("SERVER_ROLE", "ALL")
 
 # ─── الذاكرة والفصوص ───
-memory       = MemoryEngine()
-chat_agent   = ChatAgent(memory)
-vision_agent = VisionAgent(memory)
-subconscious = SubconsciousAgent(memory)
+memory = MemoryEngine()
+
+# تهيئة الفصوص بناءً على دور السيرفر فقط لمنع التداخل!
+chat_agent   = ChatAgent(memory) if SERVER_ROLE in ["ALL", "CHAT"] else None
+vision_agent = VisionAgent(memory) if SERVER_ROLE in ["ALL", "VISION"] else None
+subconscious = SubconsciousAgent(memory) if SERVER_ROLE in ["ALL", "SUB"] else None
 
 # ─── Keep-alive ───────────────────────────────
 def _keep_alive():
@@ -72,10 +76,14 @@ def ask_bimo():
         print(f"📩 {message}")
         image_b64 = vision_data.get('image')
 
-        # ─── توجيه ذكي ───
+        # ─── توجيه ذكي حسب دور السيرفر ───
         if image_b64:
+            if not vision_agent:
+                return jsonify({'reply': 'أنا لست سيرفر الرؤية!', 'emotion': 'dizzy'}), 400
             result = vision_agent.analyze(message, image_b64)
         else:
+            if not chat_agent:
+                return jsonify({'reply': 'أنا لست سيرفر الحوار!', 'emotion': 'dizzy'}), 400
             result = chat_agent.reply(message, vision_data)
 
         # ─── حفظ الذاكرة ───
@@ -83,24 +91,26 @@ def ask_bimo():
         if updated and isinstance(updated, dict):
             memory.save(updated)
 
-        # ─── تحديث مزاج + مؤقت العقل الباطن ───
+        # ─── تحديث مزاج + مؤقت العقل الباطن (إذا كان السيرفر الشامل يعمل) ───
         if result.get('emotion'):
             memory.add_mood(result['emotion'])
-        subconscious.reset_idle_timer()
+        
+        # أرسل إشارة للسيرفر الثالث (اختياري، أو اتركه يراقب الذاكرة)
+        if subconscious:
+            subconscious.reset_idle_timer()
 
         # ─── نوم / مسح التاريخ ───
         sleep_kw = ["إلى اللقاء", "نوم", "أرتاح", "bye", "sleep", "مع السلامة"]
-        if any(kw in message for kw in sleep_kw):
-            chat_agent.clear_history()
+        if any(kw in message for kw in sleep_kw) and chat_agent:
+            chat_agent.chat_session = None # بديل عن clear_history لـ Gemini
 
-       # 🔥 السماح لأوامر الواجهة والصور بالمرور إلى الهاتف!
         return jsonify({
             'reply':       result.get('reply',       'حسناً'),
             'emotion':     result.get('emotion',     'idle'),
             'face_action': result.get('face_action', 'none'),
             'ui_action':   result.get('ui_action',   'none'),
             'media_url':   result.get('media_url',   ''),
-            'image_url':   result.get('image_url',   ''), # 🔥 أضفنا هذا السطر!
+            'image_url':   result.get('image_url',   ''),
             'media_title': result.get('media_title', ''),
         })
 
@@ -110,6 +120,9 @@ def ask_bimo():
 
 @app.route('/spontaneous', methods=['GET'])
 def spontaneous():
+    if not subconscious:
+        return jsonify({'speak': False})
+    
     result = subconscious.get_spontaneous()
     if result:
         return jsonify(result)
@@ -153,7 +166,8 @@ def get_memory():
 @app.route('/memory/reset', methods=['POST'])
 def reset_memory():
     memory.reset()
-    chat_agent.clear_history()
+    if chat_agent:
+        chat_agent.chat_session = None
     return jsonify({'status': 'ok'})
 
 if __name__ == '__main__':
