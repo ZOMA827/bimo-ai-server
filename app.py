@@ -1,4 +1,4 @@
-# app.py — بيمو برو: ثلاثة فصوص + ذاكرة سحابية + فلتر هلوسات
+# app.py — بيمو برو: ثلاثة فصوص + ذاكرة سحابية + فلتر هلوسات + نظام الهولوغرام
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -43,25 +43,21 @@ WHISPER_HALLUCINATIONS = {
     "subtitles", "subscribe",
 }
 
-
 def _is_hallucination(text: str) -> bool:
     t = text.strip().lower()
     if t in {h.lower() for h in WHISPER_HALLUCINATIONS}:
         return True
-    # نص قصير جداً ويحتوي على كلمة هلوسة
     if len(t) < 20:
         for h in WHISPER_HALLUCINATIONS:
             if h.lower() in t:
                 return True
     return False
 
-
 # ─── Routes ───────────────────────────────────
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
-
 
 @app.route('/ask_bimo', methods=['POST'])
 def ask_bimo():
@@ -97,29 +93,29 @@ def ask_bimo():
         if any(kw in message for kw in sleep_kw):
             chat_agent.clear_history()
 
+        # 🔥 التحديث الجبار: السماح لأوامر الواجهة (الهولوغرام) بالمرور إلى الهاتف!
         return jsonify({
             'reply':       result.get('reply',       'حسناً'),
             'emotion':     result.get('emotion',     'idle'),
             'face_action': result.get('face_action', 'none'),
+            'ui_action':   result.get('ui_action',   'none'),
+            'media_url':   result.get('media_url',   ''),
+            'media_title': result.get('media_title', ''),
         })
 
     except Exception:
         traceback.print_exc()
         return jsonify({'reply': 'عذراً، عندي عطل فني.', 'emotion': 'dizzy'}), 500
 
-
 @app.route('/spontaneous', methods=['GET'])
 def spontaneous():
-    """الهاتف يسأل كل 30 ثانية: هل عندك شيء تقوله؟"""
     result = subconscious.get_spontaneous()
     if result:
         return jsonify(result)
     return jsonify({'speak': False})
 
-
 @app.route('/transcribe', methods=['POST'])
 def transcribe_audio():
-    """تحويل الصوت إلى نص عبر Groq Whisper + فلتر هلوسات"""
     try:
         key = os.environ.get("GROQ_API_KEY_1") or os.environ.get("GROQ_API_KEY")
         if not key:
@@ -138,7 +134,6 @@ def transcribe_audio():
         r.raise_for_status()
         text = r.json().get('text', '').strip()
 
-        # ─── فلتر الهلوسات ───
         if _is_hallucination(text):
             print(f"🚫 هلوسة Whisper تجاهلت: '{text}'")
             return jsonify({'text': ''})
@@ -150,11 +145,9 @@ def transcribe_audio():
         traceback.print_exc()
         return jsonify({'error': 'فشل التحويل'}), 500
 
-
 @app.route('/memory', methods=['GET'])
 def get_memory():
     return jsonify(memory.get())
-
 
 @app.route('/memory/reset', methods=['POST'])
 def reset_memory():
@@ -162,8 +155,6 @@ def reset_memory():
     chat_agent.clear_history()
     return jsonify({'status': 'ok'})
 
-
-# ─── Main ─────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"🚀 Bimo → port {port}")
