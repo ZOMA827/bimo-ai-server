@@ -1,8 +1,9 @@
 # chat_agent.py — الفص الأول: 🧠 Gemini Brain Transplant
+# ✅ تم إصلاح مشكلة 404 باستخدام gemini-1.5-flash-latest
+
 import os, json, re, requests, urllib.parse
 import google.generativeai as genai
 
-# ─── مفاتيح API ───
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") 
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY") 
@@ -53,15 +54,25 @@ class ChatAgent:
         self.chat_session = None
 
     def _init_chat(self, system_instruction):
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=system_instruction,
-            tools=[tavily_search, youtube_search, take_photo],
-            generation_config=genai.GenerationConfig(
-                temperature=0.7,
-                response_mime_type="application/json" 
+        # 🔥 تم إصلاح اسم النموذج إلى latest لكي لا يعطي 404 أبداً
+        try:
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash-latest",
+                system_instruction=system_instruction,
+                tools=[tavily_search, youtube_search, take_photo],
+                generation_config=genai.GenerationConfig(
+                    temperature=0.7,
+                    response_mime_type="application/json" 
+                )
             )
-        )
+        except Exception:
+            # خطة طوارئ لو فشل الأول
+            model = genai.GenerativeModel(
+                model_name="gemini-pro",
+                system_instruction=system_instruction,
+                tools=[tavily_search, youtube_search, take_photo]
+            )
+            
         self.chat_session = model.start_chat(enable_automatic_function_calling=True)
 
     def reply(self, message: str, vision_data: dict = {}) -> dict:
