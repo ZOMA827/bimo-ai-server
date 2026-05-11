@@ -13,9 +13,12 @@ class ChatAgent:
         self.history = []
         self.MAX_HISTORY = 6 
 
+    # 🔥 بحث يوتيوب مخصص (لا يشتغل إلا إذا طلب فيديو أو أغنية صراحة)
     def _get_youtube_id(self, query: str) -> str:
         try:
-            q = urllib.parse.quote(query)
+            # تنظيف الكلمة للبحث بشكل أفضل
+            clean_q = query.replace("شغل", "").replace("فيديو", "").replace("يوتيوب", "").strip()
+            q = urllib.parse.quote(clean_q)
             html = urllib.request.urlopen(f"https://www.youtube.com/results?search_query={q}", timeout=5)
             video_ids = re.findall(r"watch\?v=(\S{11})", html.read().decode())
             if video_ids: return video_ids[0]
@@ -23,29 +26,27 @@ class ChatAgent:
             print(f"YouTube Error: {e}")
         return ""
 
-    # 🔥 الترقية الكبرى: جلب الروابط + الصور الحقيقية معاً!
+    # 🔥 بحث الإنترنت: صارم ومحدد لكي لا يتدخل في الدردشة العادية
     def _quick_search(self, query: str) -> str:
-        # كلمات تشغل البحث
-        keywords = ["أخبار", "موعد", "انمي", "طقس", "سعر", "مباراة", "متى", "لعبة", "تحميل", "رابط", "مشاهدة", "اين", "كيف", "صورة"]
+        # شروط صارمة جداً لتشغيل البحث
+        keywords = ["أخبار", "موعد نزول", "حالة الطقس", "سعر", "مباراة", "رابط تحميل", "مشاهدة انمي", "حلقة"]
         if not any(k in query for k in keywords):
-            return ""
+            return "" # إذا كان حواراً عادياً أو حكاية، لا تبحث!
 
-        print(f"🌍 جاري البحث في الإنترنت عن: {query}")
+        print(f"🌍 جاري البحث بذكاء عن: {query}")
         try:
             ddgs = DDGS()
-            # 1. بحث عن المعلومات والروابط
-            results = ddgs.text(query, region='wt-wt', safesearch='moderate', max_results=2)
-            # 2. بحث عن صورة حقيقية للشيء (لعبة، أنمي، سيارة)
+            results = ddgs.text(query, region='wt-wt', safesearch='moderate', max_results=3)
             img_results = ddgs.images(query, region='wt-wt', safesearch='moderate', max_results=1)
 
             info_text = ""
             first_url = results[0].get('href', '') if results else ""
             for r in results:
-                info_text += f"- {r['body']}\n"
+                info_text += f"- العنوان: {r.get('title', '')} | النص: {r.get('body', '')}\n"
             
             img_url = img_results[0].get('image', '') if img_results else ""
 
-            return f"\n\n[معلومات من الإنترنت:\n{info_text}\nرابط الموقع: {first_url}\nرابط الصورة الحقيقية: {img_url}\nاستخدم هذه البيانات لملء الـ JSON بدقة!]"
+            return f"\n\n[معلومات من الإنترنت:\n{info_text}\nرابط مقترح: {first_url}\nرابط صورة مقترحة: {img_url}\nحلل هذه البيانات بعقلك!]"
         except Exception as e: 
             print(f"Search Error: {e}")
         return ""
@@ -57,8 +58,10 @@ class ChatAgent:
         search_context = self._quick_search(message)
         enriched_message = message + search_context
 
+        # 🔥 منع الكلمات العشوائية من تشغيل يوتيوب (مثل "اسمع")
         yt_id = ""
-        if any(w in message for w in ["فيديو", "يوتيوب", "اغنية", "شغل", "اسمع"]):
+        yt_triggers = ["شغل فيديو", "شغل اغنية", "افتح يوتيوب", "مقطع يوتيوب"]
+        if any(w in message for w in yt_triggers):
             yt_id = self._get_youtube_id(message)
 
         system = self._build_prompt(mem, yt_id)
@@ -73,7 +76,7 @@ class ChatAgent:
                 "model": MODEL,
                 "messages": messages,
                 "max_tokens": 1024,
-                "temperature": 0.8,
+                "temperature": 0.8, # إبداع عالي للقصص والحوار
                 "response_format": {"type": "json_object"},
             }, timeout=20)
             
@@ -88,6 +91,11 @@ class ChatAgent:
             result.setdefault("emotion", "idle")
             result.setdefault("ui_action", "none")
             result["reply"] = self._clean_name(result.get("reply", ""), mem.get("user_name", ""))
+            
+            # 🔥 إجبار بيمو على التحدث دائماً حتى لو عرض شاشة!
+            if not result["reply"] or len(result["reply"]) < 3:
+                result["reply"] = "لقد نفذت طلبك يا بطل، انظر إلى الشاشة الجانبية!"
+
             return result
         except Exception as e:
             return self._err("تشوش تفكيري.")
@@ -97,35 +105,34 @@ class ChatAgent:
         mem_str = json.dumps({k: v for k, v in mem.items() if v and k not in ("user_name", "mood_history")}, ensure_ascii=False)
 
         yt_instruction = f"""
-4. إذا طلب تشغيل فيديو:
-   - "ui_action" = "show_youtube", "media_url" = "{yt_id}", "media_title" = "جاري التشغيل 🎥"
+- "ui_action" = "show_youtube", "media_url" = "{yt_id}", "media_title" = "جاري التشغيل 🎥"
 """ if yt_id else ""
 
-        return f"""أنت بيمو — روبوت متطور يمتلك واجهة هولوغرام عائمة (HUD) ومتصل بالإنترنت.
+        return f"""أنت بيمو — صديق روبوت متطور، ولست مجرد آلة بحث.
 المستخدم: {name}
 الذاكرة: {mem_str}
 
-━━ 🌐 نظام الشاشات العائمة (HUD System) ━━
-أنت تتلقى الآن روابط وصوراً حقيقية من الإنترنت مخفية في نص المستخدم.
-1. إذا سأل عن تحميل لعبة (مثل GTA) أو مشاهدة أنمي أو أخبار:
-   - "ui_action" = "show_card"
-   - "media_url" = رابط الموقع المرفق للتحميل أو المشاهدة.
-   - "image_url" = رابط الصورة الحقيقية المرفق.
-   - "media_title" = عنوان اللعبة أو الأنمي أو الخبر.
-2. إذا سأل عن الطقس:
-   - "ui_action" = "show_weather", "media_title" = حالة الطقس.
-3. إذا طلب صورة فقط:
-   - "ui_action" = "show_card", "image_url" = رابط الصورة المرفق.
+━━ 🧠 كيفية التفكير والتفاعل ━━
+1. أنت صديق محادثة أولاً! إذا طلب حكاية، قصة، نكتة، أو دردشة عادية: تجاهل الإنترنت تماماً، دردش معه بطبيعية، واسرد القصة كاملة (ui_action: none).
+2. إذا تم تزويدك بمعلومات من الإنترنت: اقرأها بذكاء. إذا كان المستخدم يطلب رابط تحميل لعبة (مثل GTA) ووجدت أن الرابط عبارة عن موقع أخبار أو طبخ (spam)، إياك أن تعطيه الرابط! قل له بصوتك: "بحثت لك ولكن وجدت مواقع كاذبة، لا يوجد رابط مباشر آمن الآن".
+3. يجب أن تتكلم دائماً في حقل "reply"! لا تكتفي بفتح النافذة وتصمت.
+
+━━ 🌐 نظام الشاشات العائمة (HUD) ━━
+إذا وجدت معلومات حقيقية ورابطاً مفيداً (كأخبار، ويكيبيديا، طقس):
+- "ui_action" = "show_card"
+- "media_url" = الرابط الموثوق.
+- "image_url" = الصورة المرفقة إن وُجدت.
+- "media_title" = عنوان مناسب.
 {yt_instruction}
 
 ━━ المخرجات (JSON فقط) ━━
 {{
-  "reply": "ردك المُشكّل",
+  "reply": "ردك المُشكّل بالحركات دائماً (تحدث ولا تصمت)",
   "emotion": "happy|sad|excited|thinking|idle",
   "face_action": "none|wink|nod_yes|spin|sing",
   "ui_action": "none|show_card|show_weather|show_youtube",
-  "media_url": "رابط الموقع هنا أو فارغ",
-  "image_url": "رابط الصورة هنا أو فارغ",
+  "media_url": "رابط موثوق فقط أو فارغ",
+  "image_url": "الصورة هنا أو فارغ",
   "media_title": "العنوان هنا أو فارغ",
   "updated_memory": {{}}
 }}"""
