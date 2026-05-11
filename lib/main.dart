@@ -80,38 +80,6 @@ class _BimoProFaceState extends State<BimoProFace>
 
   int _replysSinceNameUsed = 0;
 
-  // ─── كلمات تشغل الكاميرا ───────────────────
-  static const _visionKeywords = [
-    'شوف',
-    'انظر',
-    'نظر',
-    'هنا',
-    'ما هذا',
-    'ماذا ألبس',
-    'ملابس',
-    'قميص',
-    'لون',
-    'ابتسم',
-    'رأيك',
-    'هذا',
-    'صورة',
-    'اقرأ',
-    'ما أمامك',
-    'ما تراه',
-    'ما لون',
-    'كيف أبدو',
-    'ما الذي',
-    'انظر إليّ',
-    'شايفني',
-    'look',
-    'see',
-    'what is this',
-    'what do you see',
-    'what color',
-    'read this',
-    'describe',
-  ];
-
   // ─────────────────────────────────────────
   void _setBusy(bool v, {Duration? autoRelease}) {
     _busyTimeout?.cancel();
@@ -470,60 +438,87 @@ class _BimoProFaceState extends State<BimoProFace>
     await _speak(reply);
   }
 
-  // ─────────────────────────────────────────
   Future<void> _callBrain(String message) async {
     _mic.pauseForSpeaking();
     _setBusy(true, autoRelease: const Duration(seconds: 30));
     _emotion.updateMood(BimoState.thinking, () => setState(() {}));
 
-    String? base64Image;
-    final needsVision = _visionKeywords.any(
-      (kw) => message.toLowerCase().contains(kw),
-    );
-
-    if (needsVision) {
-      debugPrint('📸 يفتح الكاميرا...');
-      await _vision.quickFaceScan((off) {
-        if (mounted) setState(() => _faceOffset = off);
-      });
-      base64Image = await _vision.takeSnapshotBase64();
-      debugPrint(base64Image != null ? '✅ صورة جاهزة' : '❌ فشل التصوير');
-    }
-
+    // ── الجولة الأولى: أرسل للسيرفر بدون صورة ─────────────
+    // السيرفر نفسه يقرر هل يحتاج الكاميرا (take_photo) أو لا
     final res = await _api.askBimo(
       message,
-      visionData: {
-        if (base64Image != null)
-          'image':
-              base64Image, // 🔥 تم تصحيح الكتابة البرمجية هنا لتجنب خطأ الـ Dart
-        'suppress_name': _replysSinceNameUsed < 6,
-      },
+      visionData: {'suppress_name': _replysSinceNameUsed < 6},
     );
 
     if (!mounted) return;
 
+    // ── لو الذكاء قرر يحتاج الكاميرا ──────────────────────
+    if (res != null && res['ui_action'] == 'take_photo') {
+      debugPrint('📸 الذكاء طلب الكاميرا!');
+
+      // مسح سريع لتتبع الوجه
+      await _vision.quickFaceScan((off) {
+        if (mounted) setState(() => _faceOffset = off);
+      });
+
+      // التقاط الصورة
+      final base64Image = await _vision.takeSnapshotBase64();
+      debugPrint(base64Image != null ? '✅ صورة جاهزة' : '❌ فشل التصوير');
+
+      if (base64Image == null) {
+        await _speak('ما قدرت أرى، الكاميرا مشغولة.');
+        _releaseBusy();
+        return;
+      }
+
+      // ── الجولة الثانية: أعد الإرسال مع الصورة ────────────
+      final res2 = await _api.askBimo(
+        message,
+        visionData: {
+          'image': base64Image,
+          'suppress_name': _replysSinceNameUsed < 6,
+        },
+      );
+
+      if (!mounted) return;
+      if (res2 != null) {
+        _applyResponse(res2);
+      } else {
+        _releaseBusy();
+        _emotion.updateMood(BimoState.idle, () => setState(() {}));
+      }
+      return;
+    }
+
+    // ── رد عادي (نص أو بطاقة أو يوتيوب) ───────────────────
     if (res != null) {
-      _emotion.updateMood(
-        _emotion.mapEmotion(res['emotion'] as String?),
-        () => setState(() {}),
-      );
-      _emotion.executeFaceAction(
-        res['face_action'] as String?,
-        () => setState(() {}),
-      );
-
-      // 🔥 قراءة أوامر الشاشة العائمة
-      _hudAction = res['ui_action'] as String? ?? 'none';
-      _hudUrl = res['media_url'] as String? ?? '';
-      _hudImageUrl = res['image_url'] as String? ?? ''; // 🔥 أضف هذا
-      _hudTitle = res['media_title'] as String? ?? '';
-
-      _replysSinceNameUsed++;
-      await _speak(res['reply'] as String? ?? 'لم أفهم.');
+      _applyResponse(res);
     } else {
       _releaseBusy();
       _emotion.updateMood(BimoState.idle, () => setState(() {}));
     }
+  }
+
+  // ── تطبيق الرد على الواجهة ──────────────────────────────
+  void _applyResponse(Map<String, dynamic> res) {
+    _emotion.updateMood(
+      _emotion.mapEmotion(res['emotion'] as String?),
+      () => setState(() {}),
+    );
+    _emotion.executeFaceAction(
+      res['face_action'] as String?,
+      () => setState(() {}),
+    );
+
+    setState(() {
+      _hudAction = res['ui_action'] as String? ?? 'none';
+      _hudUrl = res['media_url'] as String? ?? '';
+      _hudImageUrl = res['image_url'] as String? ?? '';
+      _hudTitle = res['media_title'] as String? ?? '';
+    });
+
+    _replysSinceNameUsed++;
+    _speak(res['reply'] as String? ?? 'لم أفهم.');
   }
 
   // ─────────────────────────────────────────
