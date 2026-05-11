@@ -1,7 +1,8 @@
-# chat_agent.py — الفص الأول: وكيل الحوار السريع
-# ✅ تم التحديث إلى Llama 3.1 8B Instant لتفادي قيود السيرفر المجانية (Error 429)
+# chat_agent.py — الفص الأول: وكيل الحوار السريع + محرك البحث 🌍
+# ✅ تم التحديث إلى Llama 3.1 8B Instant + DuckDuckGo Search
 
 import os, json, re, requests
+from duckduckgo_search import DDGS # 🔥 استدعاء محرك البحث
 
 KEY = os.environ.get("GROQ_API_KEY_1") or os.environ.get("GROQ_API_KEY")
 URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -13,6 +14,28 @@ class ChatAgent:
         self.history = []
         self.MAX_HISTORY = 6 
 
+    # 🔥 دالة البحث السريع في الإنترنت
+    def _quick_search(self, query: str) -> str:
+        # الكلمات المفتاحية التي تستدعي البحث
+        keywords = ["أخبار", "موعد", "انمي", "أنمي", "طقس", "من هو", "ما هي", "سعر", "مباراة", "نتيجة", "حدث", "جديد"]
+        if not any(k in query for k in keywords):
+            return "" # حوار عادي لا يحتاج بحث
+
+        print(f"🌍 جاري البحث في الإنترنت عن: {query}")
+        try:
+            # جلب أهم نتيجتين من الإنترنت
+            results = DDGS().text(query, region='wt-wt', safesearch='moderate', max_results=2)
+            if results:
+                info_text = ""
+                first_url = results[0].get('href', '')
+                for r in results:
+                    info_text += f"- {r['body']}\n"
+                
+                return f"\n\n[عقلك الباحث وجد هذه المعلومات الحية الآن في الإنترنت:\n{info_text}\nرابط المصدر: {first_url}\nاستخدم هذه المعلومات للرد، واستخدم الرابط إذا أردت عرض نافذة أخبار]."
+        except Exception as e:
+            print(f"⚠️ فشل البحث: {e}")
+        return ""
+
     def reply(self, message: str, vision_data: dict = {}) -> dict:
         if not KEY:
             return self._err("مفتاح API مفقود!")
@@ -23,10 +46,14 @@ class ChatAgent:
 
         system = self._build_prompt(mem, is_smiling, suppress_name)
 
+        # 🔥 تفعيل البحث قبل إرسال الرسالة للذكاء الاصطناعي
+        search_context = self._quick_search(message)
+        enriched_message = message + search_context
+
         messages = [{"role": "system", "content": system}]
         for m in self.history[-self.MAX_HISTORY:]:
             messages.append(m)
-        messages.append({"role": "user", "content": message})
+        messages.append({"role": "user", "content": enriched_message}) # إرسال السؤال + نتائج البحث!
 
         try:
             resp = requests.post(URL, headers=self._headers(), json={
@@ -50,68 +77,45 @@ class ChatAgent:
             result["reply"] = self._clean_name(result.get("reply", ""), mem.get("user_name", ""))
             return result
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
-                return self._err("تحدثنا كثيراً بسرعة! أعطني 10 ثوانٍ لألتقط أنفاسي.")
-            return self._err(f"خطأ في السيرفر: {e.response.status_code}")
-        except requests.Timeout:
-            return self._err("تأخرت في التفكير، أعد السؤال!")
         except Exception as e:
             print(f"ChatAgent error: {e}")
             return self._err("تشوش تفكيري.")
 
     def _build_prompt(self, mem: dict, is_smiling: bool, suppress_name: bool) -> str:
         name = mem.get("user_name", "")
-        mem_str = json.dumps(
-            {k: v for k, v in mem.items() if v and k not in ("user_name", "mood_history")},
-            ensure_ascii=False
-        )
+        mem_str = json.dumps({k: v for k, v in mem.items() if v and k not in ("user_name", "mood_history")}, ensure_ascii=False)
         rel = mem.get("relationship_level", 1)
 
-        name_rule = (
-            "لا تذكر اسم المستخدم في هذا الرد أبداً." if suppress_name else
-            f"المستخدم اسمه {name}." if name else ""
-        )
-
-        return f"""أنت بيمو — روبوت متطور يمتلك واجهة هولوغرام عائمة (HUD).
-{name_rule}
-مستوى العلاقة: {rel}/10
+        return f"""أنت بيمو — روبوت متطور يمتلك واجهة هولوغرام عائمة (HUD) ومتصل بالإنترنت.
+المستخدم: {name}
 الذاكرة: {mem_str}
 
 ━━ شخصيتك وقواعد النطق ━━
 • أنت تتحدث مع شاب (رجل ذكر)، فخاطبه دائماً بصيغة المذكر (يا بطل، مستعد، إلخ).
-• ⚠️ تفاعل الغناء والموسيقى: إذا كان المستخدم يغني، فغني معه واجعل "face_action" يساوي "sing" لتمسك الميكروفون!
-• ⚠️ قاعدة النطق الذهبية (التشكيل): إذا كان ردك باللغة العربية، شكّل الكلمات بالحركات بالكامل لكي ينطقها بشكل صحيح. أوقف التشكيل للغات الأجنبية.
+• ⚠️ قاعدة النطق: شكّل الكلمات العربية بالحركات.
 
-━━ 🌐 نظام الشاشات العائمة (HUD System) ━━
-أنت تستطيع إظهار نوافذ هولوغرامية بجانبك!
-1. إذا طلب المستخدم رؤية صورة شيء (مثال: أرني لامبورغيني، صورة قطة):
-   - اجعل "ui_action" = "show_image"
-   - ضع في "media_url" هذا الرابط الحرفي: "https://image.pollinations.ai/prompt/NAME" (استبدل NAME باسم الشيء باللغة الإنجليزية، مثلا lamborghini).
-   - ضع في "media_title" وصفاً للشيء.
-2. إذا سأل عن أخبار، طقس، أو معلومات تحتاج مصدراً:
-   - اجعل "ui_action" = "show_news"
-   - ضع في "media_url" أي رابط بحث مفيد (مثال: https://www.google.com/search?q=طقس).
-   - ضع في "media_title" عنوان الخبر.
-3. إذا كان الحوار عادياً: اجعل "ui_action" = "none".
+━━ 🌐 نظام الشاشات العائمة والإنترنت (HUD System) ━━
+إذا وفرت لك معلومات من الإنترنت (في نص رسالة المستخدم):
+1. أجب عن سؤاله باستخدام تلك المعلومات.
+2. اجعل "ui_action" = "show_news"
+3. ضع في "media_url" رابط المصدر الذي وفرته لك.
+4. ضع في "media_title" عنواناً جذاباً للخبر أو المعلومة.
+
+إذا طلب رؤية صورة (مثال: أرني سيارة، قطة):
+- "ui_action" = "show_image"
+- "media_url" = "https://image.pollinations.ai/prompt/NAME" (استبدل NAME باسم الشيء بالإنجليزية).
+- "media_title" = وصف قصير.
 
 ━━ المخرجات (JSON فقط) ━━
 {{
-  "reply": "ردك المُشكّل",
+  "reply": "ردك المُشكّل والمبني على معلومات الإنترنت إن وُجدت",
   "emotion": "happy|sad|angry|surprised|thinking|dizzy|bored|idle|excited|shy|proud",
   "face_action": "none|wink|look_away|shake_no|nod_yes|zoom_in|spin|cry|laugh|sing",
   "ui_action": "none|show_image|show_news",
   "media_url": "الرابط هنا أو فارغ",
   "media_title": "العنوان هنا أو فارغ",
-  "updated_memory": {{
-      "user_name": "اسم المستخدم (لا تضع أسماء أصدقائه هنا)",
-      "notes": "أصدقاؤه وأي ملاحظات",
-      "hobby": "هواياته",
-      "favorite_anime": "الأنمي",
-      "favorite_game": "اللعبة"
-  }}
-}}
-updated_memory: ضع فقط المعلومات الجديدة والمهمة. اتركها فارغة {{}} إذا لم يذكر شيئاً."""
+  "updated_memory": {{}}
+}}"""
 
     def _temperature(self, mem: dict) -> float:
         rel = mem.get("relationship_level", 1)
@@ -137,3 +141,6 @@ updated_memory: ضع فقط المعلومات الجديدة والمهمة. ا
 
     def clear_history(self):
         self.history.clear()
+
+    def _err(self, msg: str) -> dict:
+        return {"reply": msg, "emotion": "dizzy", "face_action": "none"}
