@@ -106,11 +106,14 @@ class ChatAgent:
   "emotion": "happy|sad|angry|surprised|thinking|dizzy|bored|idle|excited|shy|proud",
   "face_action": "none|wink|look_away|shake_no|nod_yes|zoom_in|spin|cry|laugh|sing",
   "updated_memory": {{
-      "favorite_anime": "اسم الأنمي إذا ذكر المستخدم أنه يتابعه أو يحبه",
-      "notes": "أي اهتمامات أخرى يذكرها"
+      "user_name": "اسم المستخدم (استخدمه فقط لاسم من تتحدث معه، إياك أن تضع أسماء أصدقائه أو عائلته هنا!)",
+      "notes": "اكتب هنا أسماء أصدقائه أو أي معلومات إضافية عنه",
+      "hobby": "هواياته",
+      "favorite_anime": "اسم الأنمي",
+      "favorite_game": "اسم اللعبة"
   }}
 }}
-updated_memory: ضع فقط المعلومات الجديدة والمهمة. اتركها فارغة {{}} إذا لم يذكر معلومات عن نفسه."""
+updated_memory: ضع فقط المعلومات الجديدة. اتركها فارغة {{}} إذا لم يذكر معلومات تستحق الحفظ، ولا تمسح معلومات قديمة."""
 
     def _temperature(self, mem: dict) -> float:
         rel = mem.get("relationship_level", 1)

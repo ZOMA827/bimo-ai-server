@@ -1,5 +1,5 @@
 # memory_engine.py — ذاكرة بيمو السحابية الخالدة (Firebase Edition) ☁️
-# ✅ حقول جديدة لكل الاهتمامات
+# ✅ حقول جديدة لكل الاهتمامات + حماية ضد مسح البيانات واختراع المفاتيح
 
 import firebase_admin
 from firebase_admin import credentials, db
@@ -20,7 +20,6 @@ DEFAULT_MEMORY = {
     "preferred_lang":   "arabic",   # ← جديد: اللغة المفضلة
     "relationship_level": 1,
 }
-
 
 class MemoryEngine:
     def __init__(self):
@@ -55,9 +54,32 @@ class MemoryEngine:
     def save(self, new_data: dict):
         if not new_data:
             return
+            
         for key, value in new_data.items():
-            if value:  # لا تحفظ قيماً فارغة
-                self.memory[key] = value
+            if not value:  # تجاهل القيم الفارغة (حتى لا يمسح اسمك إذا أرسل قيمة فارغة)
+                continue
+                
+            # 1. فلتر الذكاء الاصطناعي (منع اختراع مفاتيح وهمية مثل friend_name)
+            if key not in DEFAULT_MEMORY:
+                # إذا اخترع مفتاح "name" بالخطأ، نوجهه للمفتاح الصحيح "user_name"
+                if key == "name":
+                    self.memory["user_name"] = str(value)
+                else:
+                    # أي اختراع آخر نضعه كـ "ملاحظة" لكي لا نلوث قاعدة البيانات
+                    old_notes = self.memory.get("notes", "")
+                    addition = f"{key}: {value}"
+                    if addition not in old_notes:
+                        self.memory["notes"] = f"{old_notes} | {addition}".strip(" |")
+                continue
+
+            # 2. ميزة التراكم (Append) للملاحظات حتى لا يمسح الماضي!
+            if key == "notes" or key == "hobby":
+                old_val = self.memory.get(key, "")
+                if str(value) not in old_val:
+                    self.memory[key] = f"{old_val} | {value}".strip(" |")
+            else:
+                # تحديث طبيعي لباقي القيم (مثل user_name)
+                self.memory[key] = str(value)
 
         self.memory["last_seen"] = time.strftime("%Y-%m-%d %H:%M")
 
@@ -78,7 +100,7 @@ class MemoryEngine:
 
         try:
             self.db_ref.set(self.memory)
-            print(f"☁️ الذاكرة محفوظة: {list(new_data.keys())}")
+            print(f"☁️ الذاكرة محفوظة ومحمية: {list(new_data.keys())}")
         except Exception as e:
             print(f"❌ فشل الحفظ: {e}")
 
