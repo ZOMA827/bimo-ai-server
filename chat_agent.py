@@ -13,7 +13,7 @@ URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # ─── مصفوفة النماذج المجانية (مضاد الانهيار) ───
 # إذا تعطل الأول، يتدخل الثاني، ثم الثالث فوراً!
-MODELS_MATRIX = [
+MODELS = [
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
     "mixtral-8x7b-32768",
