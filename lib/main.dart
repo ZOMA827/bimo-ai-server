@@ -13,6 +13,8 @@ import 'ui/bimo_face.dart';
 import 'ui/animations.dart';
 import 'senses/wake_word_engine.dart';
 import 'senses/physical_awareness.dart';
+import 'ui/hud_layer.dart'; // 🔥 أضف هذا
+import 'ui/hologram_layer.dart'; // 🔥 أضف هذا
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,6 +58,12 @@ class _BimoProFaceState extends State<BimoProFace>
 
   late Animation<double> _breathing;
   late Animation<double> _pulseAnim;
+
+  // 🔥 متغيرات شاشة الهولوغرام العائمة
+  String _hudAction = 'none';
+  String _hudUrl = '';
+  String _hudImageUrl = ''; // 🔥 أضف هذا
+  String _hudTitle = '';
 
   Offset _faceOffset = Offset.zero;
   bool _isBlinking = false;
@@ -259,6 +267,10 @@ class _BimoProFaceState extends State<BimoProFace>
     if (words.isEmpty) return;
     final cmd = words.trim().toLowerCase();
     debugPrint('🎙 "$cmd"');
+
+    setState(() {
+      _hudAction = 'none'; // 🔥 إخفاء النافذة القديمة عند بدء حوار جديد
+    });
 
     _cancelAlone();
 
@@ -481,7 +493,9 @@ class _BimoProFaceState extends State<BimoProFace>
     final res = await _api.askBimo(
       message,
       visionData: {
-        if (base64Image != null) 'image': base64Image,
+        if (base64Image != null)
+          'image':
+              base64Image, // 🔥 تم تصحيح الكتابة البرمجية هنا لتجنب خطأ الـ Dart
         'suppress_name': _replysSinceNameUsed < 6,
       },
     );
@@ -497,6 +511,13 @@ class _BimoProFaceState extends State<BimoProFace>
         res['face_action'] as String?,
         () => setState(() {}),
       );
+
+      // 🔥 قراءة أوامر الشاشة العائمة
+      _hudAction = res['ui_action'] as String? ?? 'none';
+      _hudUrl = res['media_url'] as String? ?? '';
+      _hudImageUrl = res['image_url'] as String? ?? ''; // 🔥 أضف هذا
+      _hudTitle = res['media_title'] as String? ?? '';
+
       _replysSinceNameUsed++;
       await _speak(res['reply'] as String? ?? 'لم أفهم.');
     } else {
@@ -599,6 +620,22 @@ class _BimoProFaceState extends State<BimoProFace>
     );
   }
 
+  // 🔥 دالة تجلب لون المزاج الحالي للنافذة العائمة
+  Color _getGlowColor() {
+    switch (_emotion.currentState) {
+      case BimoState.happy:
+        return Colors.greenAccent;
+      case BimoState.angry:
+        return Colors.redAccent;
+      case BimoState.dizzy:
+        return Colors.orangeAccent;
+      case BimoState.thinking:
+        return Colors.purpleAccent;
+      default:
+        return Colors.cyanAccent;
+    }
+  }
+
   // ─────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -632,6 +669,13 @@ class _BimoProFaceState extends State<BimoProFace>
       body: Stack(
         children: [
           _buildBg(),
+
+          // ✨ نظام الهولوغرام والجزيئات (خلف بيمو)
+          HologramLayer(
+            color: _getGlowColor(),
+            isActive: _emotion.currentState != BimoState.sleeping,
+          ),
+
           Center(
             child: Transform.scale(
               scale: animScale,
@@ -697,13 +741,23 @@ class _BimoProFaceState extends State<BimoProFace>
                     const SizedBox(height: 30),
                     _statusLabel(),
 
-                    // 🔥 إضافة الميكروفون واليدين عند الغناء هنا
+                    // 🔥 الميكروفون واليدين عند الغناء
                     if (_emotion.currentFaceAction == FaceAction.sing)
                       _buildSingingMic(),
                   ],
                 ),
               ),
             ),
+          ),
+
+          // 🌐 شاشة الهولوغرام العائمة (HUD) تضاف هنا كطبقة فوق الجميع
+          // 🌐 شاشة الهولوغرام العائمة (HUD)
+          HudLayer(
+            uiAction: _hudAction,
+            mediaUrl: _hudUrl,
+            imageUrl: _hudImageUrl, // 🔥 أضف هذا
+            mediaTitle: _hudTitle,
+            glowColor: _getGlowColor(),
           ),
         ],
       ),

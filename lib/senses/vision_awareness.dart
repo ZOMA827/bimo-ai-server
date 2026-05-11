@@ -149,7 +149,9 @@ class VisionAwareness {
   InputImage? _buildInputImage(CameraImage image) {
     try {
       final WriteBuffer buf = WriteBuffer();
-      for (final p in image.planes) buf.putUint8List(p.bytes);
+      for (final p in image.planes) {
+        buf.putUint8List(p.bytes);
+      }
       return InputImage.fromBytes(
         bytes: buf.done().buffer.asUint8List(),
         metadata: InputImageMetadata(
