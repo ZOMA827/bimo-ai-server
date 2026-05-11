@@ -1,19 +1,14 @@
 # chat_agent.py — الفص الأول: 🧠 Gemini Brain Transplant
-# ✅ ذكاء خارق، مجاني، مضاد للانهيار، ويفصل تماماً بين الدردشة والبحث
-
 import os, json, re, requests, urllib.parse
 import google.generativeai as genai
 
 # ─── مفاتيح API ───
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") # لليوتيوب
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY") # للصور والروابط
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") 
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY") 
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-
-# ─── أدوات الذكاء الاصطناعي (أصلية لـ Gemini) ───
-# السحر هنا: Gemini سيستدعي هذه الدوال تلقائياً في الخلفية عند الحاجة!
 
 def tavily_search(query: str, need_image: bool = False) -> dict:
     """ابحث في الإنترنت عن معلومات حقيقية، أخبار، طقس، تحميل ألعاب، أو صور."""
@@ -48,28 +43,25 @@ def youtube_search(query: str) -> dict:
     return {"error": "لم أجد الفيديو."}
 
 def take_photo() -> dict:
-    """استخدم هذه الأداة فوراً لتشغيل الكاميرا إذا طلب منك المستخدم أن تنظر إليه أو تصف ما أمامه."""
+    """لتشغيل الكاميرا إذا طلب منك المستخدم أن تنظر إليه."""
     print("📸 Gemini طلب تشغيل الكاميرا")
     return {"camera_status": "opening_now", "note": "Tell the user you are looking at them."}
 
-# ─── العقل المدبر ───
 class ChatAgent:
     def __init__(self, memory):
         self.memory  = memory
         self.chat_session = None
 
     def _init_chat(self, system_instruction):
-        # 🧠 نموذج Gemini 1.5 Flash السريع والذكي جداً
         model = genai.GenerativeModel(
             model_name="gemini-1.5-flash",
             system_instruction=system_instruction,
             tools=[tavily_search, youtube_search, take_photo],
             generation_config=genai.GenerationConfig(
                 temperature=0.7,
-                response_mime_type="application/json" # يجبره على JSON بقوة النظام
+                response_mime_type="application/json" 
             )
         )
-        # ميزة خرافية: Gemini يتولى تشغيل الأدوات بنفسه دون تدخل منا!
         self.chat_session = model.start_chat(enable_automatic_function_calling=True)
 
     def reply(self, message: str, vision_data: dict = {}) -> dict:
@@ -78,12 +70,10 @@ class ChatAgent:
         mem = self.memory.get()
         system = self._build_system(mem)
 
-        # إذا كانت الذاكرة فارغة (أو تم مسحها)، ابدأ الجلسة
         if not self.chat_session:
             self._init_chat(system)
 
         try:
-            # نرسل الرسالة، وGemini سيبحث لوحده إن احتاج، ويرد بـ JSON نهائي
             response = self.chat_session.send_message(message)
             text = response.text
         except Exception as e:
@@ -92,7 +82,6 @@ class ChatAgent:
 
         result = self._parse(text)
 
-        # ── تنظيف وتأمين الحقول ──
         for key in ["face_action", "emotion", "ui_action", "media_url", "image_url", "media_title"]:
             result.setdefault(key, "none" if "action" in key else ("idle" if key == "emotion" else ""))
         result.setdefault("updated_memory", {})
@@ -136,13 +125,8 @@ class ChatAgent:
         return (text[:idx+len(name)] + text[idx+len(name):].replace(name,"")).strip()
 
     def _parse(self, text: str) -> dict:
-        try: 
-            return json.loads(text)
-        except Exception:
-            m = re.search(r"\{.*\}", text, re.DOTALL)
-            if m:
-                try: return json.loads(m.group())
-                except Exception: pass
+        try: return json.loads(text)
+        except Exception: pass
         return {"reply": text.strip()[:400], "emotion": "idle", "face_action": "none"}
 
     def _err(self, msg: str) -> dict: return {"reply": msg, "emotion": "dizzy", "face_action": "none"}
