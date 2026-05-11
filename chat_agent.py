@@ -13,33 +13,41 @@ class ChatAgent:
         self.history = []
         self.MAX_HISTORY = 6 
 
-    # 🔥 أداة سحرية للبحث في يوتيوب وجلب الـ ID مباشرة!
     def _get_youtube_id(self, query: str) -> str:
         try:
             q = urllib.parse.quote(query)
             html = urllib.request.urlopen(f"https://www.youtube.com/results?search_query={q}", timeout=5)
             video_ids = re.findall(r"watch\?v=(\S{11})", html.read().decode())
-            if video_ids:
-                return video_ids[0] # إرجاع الـ ID الحقيقي
+            if video_ids: return video_ids[0]
         except Exception as e:
             print(f"YouTube Error: {e}")
         return ""
 
+    # 🔥 الترقية الكبرى: جلب الروابط + الصور الحقيقية معاً!
     def _quick_search(self, query: str) -> str:
-        keywords = ["أخبار", "موعد", "انمي", "طقس", "من هو", "ما هي", "سعر", "مباراة", "متى"]
+        # كلمات تشغل البحث
+        keywords = ["أخبار", "موعد", "انمي", "طقس", "سعر", "مباراة", "متى", "لعبة", "تحميل", "رابط", "مشاهدة", "اين", "كيف", "صورة"]
         if not any(k in query for k in keywords):
             return ""
 
         print(f"🌍 جاري البحث في الإنترنت عن: {query}")
         try:
-            results = DDGS().text(query, region='wt-wt', safesearch='moderate', max_results=2)
-            if results:
-                info_text = ""
-                first_url = results[0].get('href', '')
-                for r in results:
-                    info_text += f"- {r['body']}\n"
-                return f"\n\n[معلومات من الإنترنت:\n{info_text}\nرابط: {first_url}\nاستخدمها لتجيب بدقة.]"
-        except: pass
+            ddgs = DDGS()
+            # 1. بحث عن المعلومات والروابط
+            results = ddgs.text(query, region='wt-wt', safesearch='moderate', max_results=2)
+            # 2. بحث عن صورة حقيقية للشيء (لعبة، أنمي، سيارة)
+            img_results = ddgs.images(query, region='wt-wt', safesearch='moderate', max_results=1)
+
+            info_text = ""
+            first_url = results[0].get('href', '') if results else ""
+            for r in results:
+                info_text += f"- {r['body']}\n"
+            
+            img_url = img_results[0].get('image', '') if img_results else ""
+
+            return f"\n\n[معلومات من الإنترنت:\n{info_text}\nرابط الموقع: {first_url}\nرابط الصورة الحقيقية: {img_url}\nاستخدم هذه البيانات لملء الـ JSON بدقة!]"
+        except Exception as e: 
+            print(f"Search Error: {e}")
         return ""
 
     def reply(self, message: str, vision_data: dict = {}) -> dict:
@@ -49,7 +57,6 @@ class ChatAgent:
         search_context = self._quick_search(message)
         enriched_message = message + search_context
 
-        # إذا طلب فيديو يوتيوب أو أغنية، نبحث عنها بالبايثون ونجلب الـ ID
         yt_id = ""
         if any(w in message for w in ["فيديو", "يوتيوب", "اغنية", "شغل", "اسمع"]):
             yt_id = self._get_youtube_id(message)
@@ -90,41 +97,35 @@ class ChatAgent:
         mem_str = json.dumps({k: v for k, v in mem.items() if v and k not in ("user_name", "mood_history")}, ensure_ascii=False)
 
         yt_instruction = f"""
-4. إذا طلب تشغيل فيديو أو أغنية:
-   - اجعل "ui_action" = "show_youtube"
-   - ضع في "media_url" هذا المعرف الحرفي: "{yt_id}"
-   - ضع في "media_title" = "جاري تشغيل الفيديو 🎥"
+4. إذا طلب تشغيل فيديو:
+   - "ui_action" = "show_youtube", "media_url" = "{yt_id}", "media_title" = "جاري التشغيل 🎥"
 """ if yt_id else ""
 
         return f"""أنت بيمو — روبوت متطور يمتلك واجهة هولوغرام عائمة (HUD) ومتصل بالإنترنت.
 المستخدم: {name}
 الذاكرة: {mem_str}
 
-━━ شخصيتك وقواعد النطق ━━
-• خاطبه دائماً بصيغة المذكر.
-• ⚠️ قاعدة النطق: شكّل الكلمات العربية بالحركات.
-
-━━ 🌐 نظام الشاشات العائمة والإنترنت (HUD System) ━━
-1. إذا سأل عن أخبار أو مواعيد ووجدت لك معلومات من الإنترنت:
-   - "ui_action" = "show_news"
-   - "media_url" = رابط المصدر المرفق.
-   - "media_title" = عنوان جذاب للخبر.
+━━ 🌐 نظام الشاشات العائمة (HUD System) ━━
+أنت تتلقى الآن روابط وصوراً حقيقية من الإنترنت مخفية في نص المستخدم.
+1. إذا سأل عن تحميل لعبة (مثل GTA) أو مشاهدة أنمي أو أخبار:
+   - "ui_action" = "show_card"
+   - "media_url" = رابط الموقع المرفق للتحميل أو المشاهدة.
+   - "image_url" = رابط الصورة الحقيقية المرفق.
+   - "media_title" = عنوان اللعبة أو الأنمي أو الخبر.
 2. إذا سأل عن الطقس:
-   - "ui_action" = "show_weather"
-   - "media_title" = اكتب درجة الحرارة وحالة الطقس (مثال: الطقس غائم 25°C).
-3. إذا طلب رؤية صورة:
-   - "ui_action" = "show_image"
-   - "media_url" = "https://image.pollinations.ai/prompt/NAME" (استبدل NAME بالشيء بالإنجليزية).
-   - "media_title" = وصف الصورة.
+   - "ui_action" = "show_weather", "media_title" = حالة الطقس.
+3. إذا طلب صورة فقط:
+   - "ui_action" = "show_card", "image_url" = رابط الصورة المرفق.
 {yt_instruction}
 
 ━━ المخرجات (JSON فقط) ━━
 {{
   "reply": "ردك المُشكّل",
-  "emotion": "happy|sad|angry|surprised|thinking|dizzy|bored|idle|excited|shy|proud",
-  "face_action": "none|wink|look_away|shake_no|nod_yes|zoom_in|spin|cry|laugh|sing",
-  "ui_action": "none|show_image|show_news|show_weather|show_youtube",
-  "media_url": "الرابط هنا أو فارغ",
+  "emotion": "happy|sad|excited|thinking|idle",
+  "face_action": "none|wink|nod_yes|spin|sing",
+  "ui_action": "none|show_card|show_weather|show_youtube",
+  "media_url": "رابط الموقع هنا أو فارغ",
+  "image_url": "رابط الصورة هنا أو فارغ",
   "media_title": "العنوان هنا أو فارغ",
   "updated_memory": {{}}
 }}"""

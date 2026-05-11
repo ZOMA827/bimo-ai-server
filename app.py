@@ -93,13 +93,14 @@ def ask_bimo():
         if any(kw in message for kw in sleep_kw):
             chat_agent.clear_history()
 
-        # 🔥 التحديث الجبار: السماح لأوامر الواجهة (الهولوغرام) بالمرور إلى الهاتف!
+       # 🔥 السماح لأوامر الواجهة والصور بالمرور إلى الهاتف!
         return jsonify({
             'reply':       result.get('reply',       'حسناً'),
             'emotion':     result.get('emotion',     'idle'),
             'face_action': result.get('face_action', 'none'),
             'ui_action':   result.get('ui_action',   'none'),
             'media_url':   result.get('media_url',   ''),
+            'image_url':   result.get('image_url',   ''), # 🔥 أضفنا هذا السطر!
             'media_title': result.get('media_title', ''),
         })
 
