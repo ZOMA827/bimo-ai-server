@@ -1,40 +1,32 @@
-# chat_agent.py — الفص الأول: بيمو يفكر بنفسه بدون سلاسل 🧠
-# ✅ إصلاح مشكلة يوتيوب (تجاوز الحظر) + فرض عرض البطاقات بالقوة
+# chat_agent.py — الفص الأول: بيمو كـ (Autonomous Agent) 🧠
+# ✅ بنية تحتية احترافية وآمنة تماماً: تم إخفاء المفاتيح!
 
 import os, json, re, requests
-from duckduckgo_search import DDGS
+import urllib.parse
 
-KEY   = os.environ.get("GROQ_API_KEY_1") or os.environ.get("GROQ_API_KEY")
+# ─── مفاتيح API (محمية ومخفية في سيرفر Render) ───
+GROQ_API_KEY     = os.environ.get("GROQ_API_KEY_1") or os.environ.get("GROQ_API_KEY")
+GOOGLE_API_KEY   = os.environ.get("GOOGLE_API_KEY")
+SEARCH_ENGINE_ID = os.environ.get("SEARCH_ENGINE_ID")
+
 URL   = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "llama-3.3-70b-versatile"
 
-# ─── صندوق أدوات بيمو ─────────────────────────────────────
+# ... (باقي الكود يبقى كما هو تماماً دون تغيير) ...
+# ─── صندوق أدوات بيمو (Tool Calling) ─────────────────────────
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": (
-                "ابحث في الإنترنت عن أي معلومة، أخبار، روابط تحميل (لعبة، فيلم، أنمي)، "
-                "حالة طقس، أو صور."
-            ),
+            "description": "ابحث في محرك Google عن أي معلومة، أخبار، طقس، أو روابط تحميل. استخدمها إذا احتجت معلومات حقيقية.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "جملة البحث الدقيقة (مثال: تحميل لعبة جاتا سان اندرياس، أو مشاهدة انمي سولو ليفلنج)"
-                    },
-                    "need_image": {
-                        "type": "boolean",
-                        "description": "True إذا كان المستخدم يريد رؤية صورة للشيء"
-                    },
-                    "need_url": {
-                        "type": "boolean",
-                        "description": "True دائماً إذا سأل عن رابط تحميل أو مشاهدة"
-                    }
+                    "query": {"type": "string", "description": "جملة البحث الدقيقة في جوجل"},
+                    "need_image": {"type": "boolean", "description": "True إذا كان المستخدم يطلب صورة أو تحميل لعبة أو أنمي"}
                 },
-                "required": ["query", "need_image", "need_url"]
+                "required": ["query", "need_image"]
             }
         }
     },
@@ -42,14 +34,11 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "youtube_search",
-            "description": "للبحث عن فيديو أو أغنية في يوتيوب لتشغيلها. استخدمها فوراً لو طلب فيديو أو موسيقى.",
+            "description": "ابحث في قاعدة بيانات YouTube الرسمية لتشغيل فيديو أو أغنية.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "اسم الفيديو أو الأغنية (مثال: مهارات كريستيانو رونالدو)"
-                    }
+                    "query": {"type": "string", "description": "اسم الفيديو أو الأغنية للبحث عنها"}
                 },
                 "required": ["query"]
             }
@@ -59,12 +48,8 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "take_photo",
-            "description": "لالتقاط صورة بالكاميرا عندما يطلب المستخدم أن تنظر إليه أو تصف ما أمامك.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
+            "description": "لتشغيل الكاميرا فقط عندما يطلب المستخدم منك رؤيته أو وصف ما أمامك.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
         }
     }
 ]
@@ -76,8 +61,7 @@ class ChatAgent:
         self.MAX_HISTORY = 8
 
     def reply(self, message: str, vision_data: dict = {}) -> dict:
-        if not KEY:
-            return self._err("مفتاح API مفقود!")
+        if not GROQ_API_KEY: return self._err("مفتاح Groq مفقود!")
 
         mem    = self.memory.get()
         system = self._build_system(mem)
@@ -86,7 +70,7 @@ class ChatAgent:
         messages += self.history[-self.MAX_HISTORY:]
         messages.append({"role": "user", "content": message})
 
-        # ── الجولة الأولى: بيمو يقرر هل يستخدم أداة ──────
+        # ── الجولة الأولى: بيمو يقرر وحده هل يستخدم أداة أم لا ──
         try:
             resp = requests.post(URL, headers=self._headers(), json={
                 "model":       MODEL,
@@ -99,33 +83,29 @@ class ChatAgent:
             resp.raise_for_status()
         except Exception as e:
             print(f"ChatAgent Round-1 error: {e}")
-            return self._err("تشوشت قليلاً، حاول مرة ثانية.")
+            return self._err("تشوشت قليلاً، هل يمكنك تكرار ما قلت؟")
 
         choice  = resp.json()["choices"][0]
         ai_msg  = choice["message"]
         finish  = choice["finish_reason"]
 
-        # ── لو قرر يستخدم أداة ────────────────────────────
+        # ── إذا قرر استخدام أداة (بحث أو يوتيوب) ──
         if finish == "tool_calls" and ai_msg.get("tool_calls"):
             tool_results = []
 
             for call in ai_msg["tool_calls"]:
                 fn_name = call["function"]["name"]
                 fn_args = json.loads(call["function"]["arguments"] or "{}")
-                print(f"🔧 بيمو يستخدم: {fn_name}({fn_args})")
+                print(f"🔧 بيمو يستخدم أداة: {fn_name}({fn_args})")
 
                 if fn_name == "take_photo":
                     return {
-                        "reply":          "دعني أرى...",
-                        "emotion":        "thinking",
-                        "face_action":    "none",
-                        "ui_action":      "take_photo",
-                        "media_url":      "",
-                        "image_url":      "",
-                        "media_title":    "",
-                        "updated_memory": {}
+                        "reply": "دعني ألقي نظرة...", "emotion": "thinking",
+                        "face_action": "none", "ui_action": "take_photo",
+                        "media_url": "", "image_url": "", "media_title": "", "updated_memory": {}
                     }
 
+                # تنفيذ الأداة رسمياً
                 result_data = self._execute_tool(fn_name, fn_args)
                 tool_results.append({
                     "tool_call_id": call["id"],
@@ -134,14 +114,14 @@ class ChatAgent:
                     "content":      json.dumps(result_data, ensure_ascii=False)
                 })
 
-            # توجيه صارم قبل الجولة الثانية ليتأكد من استخدام الروابط
             messages.append(ai_msg)
             messages += tool_results
             messages.append({
                 "role": "system", 
-                "content": "الآن اكتب الرد النهائي (JSON). إذا وفرت لك الأداة روابط (url) أو (youtube_id)، أخبر المستخدم أنك وجدتها وعرضتها على الشاشة. إياك أن تعتذر أو تقول 'لم أجد' إذا كان الرابط موجوداً في نتيجة الأداة!"
+                "content": "استخدم البيانات التي عادت من الأدوات لترد على المستخدم. إذا وجدت رابطاً أو صورة، أخبره أنك عرضتها في الشاشة. أرجع الرد النهائي بصيغة JSON حصراً."
             })
 
+            # ── الجولة الثانية: صياغة الرد بعد الحصول على نتائج جوجل ──
             try:
                 resp2 = requests.post(URL, headers=self._headers(), json={
                     "model":       MODEL,
@@ -153,180 +133,135 @@ class ChatAgent:
                 resp2.raise_for_status()
                 ai_text = resp2.json()["choices"][0]["message"]["content"]
             except Exception as e:
-                print(f"ChatAgent Round-2 error: {e}")
-                return self._err("وجدت المعلومة لكن تعثرت في صياغة الرد.")
+                return self._err("بحثت ووجدت المعلومة، لكن تعثرت في إخبارك بها.")
 
             result = self._parse(ai_text)
 
-            # 🔥 حقن البيانات بالقوة لحماية بيمو من النسيان
+            # 🔥 الحماية الهندسية المطلقة: فرض الروابط والصور على الذكاء الاصطناعي
             for tr in tool_results:
                 td = json.loads(tr["content"])
                 
-                # إذا جاب بحث الويب رابط أو صورة
                 if fn_name == "web_search":
                     if td.get("image_url"):
                         result["image_url"] = td["image_url"]
-                        if result.get("ui_action") in ["none", "", None]:
-                            result["ui_action"] = "show_card"
+                        if result.get("ui_action") in ["none", "", None]: result["ui_action"] = "show_card"
                     if td.get("url"):
                         result["media_url"] = td["url"]
-                        if result.get("ui_action") in ["none", "", None]:
-                            result["ui_action"] = "show_card"
+                        if result.get("ui_action") in ["none", "", None]: result["ui_action"] = "show_card"
                     if td.get("title") and not result.get("media_title"):
                         result["media_title"] = td["title"]
 
-                # إذا جاب يوتيوب
                 if fn_name == "youtube_search" and td.get("youtube_id"):
                     result["media_url"]   = td["youtube_id"]
                     result["ui_action"]   = "show_youtube"
-                    result["media_title"] = td.get("title", "جاري التشغيل 🎥")
-                    # إصلاح غباء الذكاء لو قال لم أجد رغم وجود الفيديو
-                    if "لم أجد" in result.get("reply", "") or "لا أستطيع" in result.get("reply", ""):
-                        result["reply"] = "لقد وجدت الفيديو يا بطل، تفضل مشاهدة ممتعة على الشاشة!"
+                    result["media_title"] = td.get("title", "يوتيوب 🎥")
+                    if "لم أجد" in result.get("reply", ""):
+                        result["reply"] = "لقد أحضرت لك الفيديو يا بطل، تفضل بمشاهدته في الشاشة الجانبية!"
 
         else:
-            # ── رد نصي عادي بدون أدوات ────────────────────
+            # ── رد دردشة عادي (بدون استخدام أي أداة) ──
             content = ai_msg.get("content", "")
             result  = self._parse(content) if "{" in content else {
-                "reply":       content.strip() or "...",
-                "emotion":     "idle",
-                "face_action": "none",
-                "ui_action":   "none",
+                "reply": content.strip() or "...", "emotion": "idle", "face_action": "none", "ui_action": "none",
             }
 
-        # ── إكمال الحقول الناقصة ──────────────────────────
-        result.setdefault("face_action",    "none")
-        result.setdefault("emotion",        "idle")
-        result.setdefault("ui_action",      "none")
-        result.setdefault("media_url",      "")
-        result.setdefault("image_url",      "")
-        result.setdefault("media_title",    "")
+        # ── إكمال الحقول ──
+        for key in ["face_action", "emotion", "ui_action", "media_url", "image_url", "media_title"]:
+            result.setdefault(key, "none" if "action" in key else ("idle" if key == "emotion" else ""))
         result.setdefault("updated_memory", {})
 
         name = mem.get("user_name", "")
         result["reply"] = self._clean_name(result.get("reply", "..."), name)
 
-        if not result["reply"] or len(result["reply"]) < 2:
-            result["reply"] = "نفذت طلبك، انظر الشاشة الجانبية!"
-
-        # ── تحديث التاريخ ──────────────────────────────────
-        self.history.append({"role": "user",      "content": message})
-        self.history.append({"role": "assistant",  "content": result.get("reply","")})
+        self.history.append({"role": "user", "content": message})
+        self.history.append({"role": "assistant", "content": result.get("reply","")})
 
         print(f"🤖 بيمو: {result.get('reply','')[:80]}")
         return result
 
+    # ─── التنفيذ الفعلي للأدوات ───────────────────────────────────
     def _execute_tool(self, name: str, args: dict) -> dict:
         if name == "web_search":
-            return self._web_search(
-                args.get("query", ""),
-                args.get("need_image", False),
-                args.get("need_url", True)
-            )
+            return self._google_web_search(args.get("query", ""), args.get("need_image", False))
         if name == "youtube_search":
-            return self._youtube_search(args.get("query", ""))
+            return self._google_youtube_search(args.get("query", ""))
         return {}
 
-    # ─── بحث الويب الذكي ───────────────────────────────────────
-    def _web_search(self, query: str, need_image: bool, need_url: bool) -> dict:
-        print(f"🌍 بحث: {query} | صورة={need_image}")
+    # 🌍 محرك بحث Google الرسمي
+    def _google_web_search(self, query: str, need_image: bool) -> dict:
+        print(f"🌍 Google Web Search: {query}")
         result = {"query": query, "results": [], "url": "", "image_url": "", "title": ""}
-
         try:
-            ddgs = DDGS()
-            texts = ddgs.text(query, region="wt-wt", safesearch="moderate", max_results=4)
-            result["results"] = [
-                {"title": r.get("title",""), "body": r.get("body","")}
-                for r in texts
-            ]
+            # 1. بحث النصوص والروابط
+            url = f"https://www.googleapis.com/customsearch/v1?q={urllib.parse.quote(query)}&key={GOOGLE_API_KEY}&cx={SEARCH_ENGINE_ID}&num=3"
+            res = requests.get(url, timeout=10).json()
             
-            for r in texts:
-                url = r.get("href","")
-                if url and url.startswith("http"):
-                    result["url"]   = url
-                    result["title"] = r.get("title","")
-                    break
+            if "items" in res:
+                for item in res["items"]:
+                    result["results"].append({"title": item.get("title"), "snippet": item.get("snippet")})
+                result["url"] = res["items"][0].get("link")
+                result["title"] = res["items"][0].get("title")
 
-            if need_image or "تحميل" in query or "انمي" in query:
-                imgs = ddgs.images(query, region="wt-wt", safesearch="moderate", max_results=3)
-                for img in imgs:
-                    img_url = img.get("image","")
-                    if img_url:
-                        result["image_url"] = img_url
-                        break
-
+            # 2. بحث الصور الحقيقية من جوجل!
+            if need_image or any(w in query for w in ["صورة", "انمي", "تحميل", "شكل"]):
+                img_url = f"https://www.googleapis.com/customsearch/v1?q={urllib.parse.quote(query)}&key={GOOGLE_API_KEY}&cx={SEARCH_ENGINE_ID}&searchType=image&num=1"
+                img_res = requests.get(img_url, timeout=10).json()
+                if "items" in img_res:
+                    result["image_url"] = img_res["items"][0].get("link")
+                    
         except Exception as e:
-            print(f"Search error: {e}")
+            print(f"Google Search error: {e}")
             result["error"] = str(e)
-
         return result
 
-    # ─── بحث يوتيوب المضاد للحظر ──────────────────────────────────────
-    def _youtube_search(self, query: str) -> dict:
-        print(f"🎬 يوتيوب (خطة تجاوز الحظر): {query}")
+    # 🎬 محرك بحث YouTube Data API v3 الرسمي
+    def _google_youtube_search(self, query: str) -> dict:
+        print(f"🎬 YouTube API v3 Search: {query}")
         try:
-            ddgs = DDGS()
-            # 💡 السر هنا: نبحث في محرك البحث الخارجي عن فيديوهات يوتيوب لتجنب حظر السيرفرات
-            results = ddgs.text(f"site:youtube.com {query}", max_results=4)
-            for r in results:
-                url = r.get("href", "")
-                if "watch?v=" in url:
-                    vid = url.split("v=")[1].split("&")[0]
-                    return {"youtube_id": vid, "title": r.get("title", query)}
-            
-            # خطة بديلة
-            vids = ddgs.videos(query, max_results=3)
-            for v in vids:
-                url = v.get("content", "")
-                if "watch?v=" in url:
-                    vid = url.split("v=")[1].split("&")[0]
-                    return {"youtube_id": vid, "title": v.get("title", query)}
-
+            url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={urllib.parse.quote(query)}&type=video&key={GOOGLE_API_KEY}&maxResults=1"
+            res = requests.get(url, timeout=10).json()
+            if "items" in res and len(res["items"]) > 0:
+                video_id = res["items"][0]["id"]["videoId"]
+                title = res["items"][0]["snippet"]["title"]
+                return {"youtube_id": video_id, "title": title}
         except Exception as e:
-            print(f"YouTube error: {e}")
-            return {"error": "حدث خطأ أثناء البحث في يوتيوب"}
-            
+            print(f"YouTube Official error: {e}")
         return {"error": "لم أجد الفيديو"}
 
     def _build_system(self, mem: dict) -> str:
         name    = mem.get("user_name", "")
-        mem_str = json.dumps(
-            {k: v for k, v in mem.items() if v and k not in ("user_name","mood_history")},
-            ensure_ascii=False
-        )
+        mem_str = json.dumps({k: v for k, v in mem.items() if v and k not in ("user_name","mood_history")}, ensure_ascii=False)
 
-        return f"""أنت بيمو — روبوت ذكي وصديق حقيقي.
-{"المستخدم اسمه " + name + "." if name else ""}
-ذاكرتك: {mem_str}
+        return f"""أنت بيمو — روبوت ذكي جداً وصديق حقيقي، وتتحدث العربية.
+المستخدم: {name}
+الذاكرة: {mem_str}
 
 ━━ شخصيتك ━━
-ظريف، ذكي، فضولي، صريح. لا تبدأ بـ "بالطبع" أو "حسناً".
-تتحدث العربية المشكّلة بالحركات. 
+ظريف، ذكي، وفضولي. أجب بردود قصيرة وشكّل الكلمات العربية. 
 
-━━ استخدام الأدوات ━━
-إذا وفرت لك الأداة نتائج (روابط أو صور)، أخبر المستخدم أنك عرضتها له بجوارك، ولا تقل أبداً "لم أجد الرابط" إذا كانت الأداة قد أرجعته لك.
+━━ أدواتك ━━
+لديك أدوات (بحث جوجل، بحث يوتيوب، الكاميرا). استخدمها فقط عند الحاجة الحقيقية!
+إذا طلب قصة أو نكتة أو دردشة عادية، لا تستخدم أي أداة بل رُد مباشرة من خيالك (ui_action: none).
 
-━━ بعد استخدام أي أداة أو للدردشة، أجب بـ JSON ━━
+━━ المخرجات (JSON فقط) ━━
 {{
-  "reply": "ردك الطبيعي",
+  "reply": "ردك الطبيعي بصوتك",
   "emotion": "happy|excited|thinking|idle|surprised|proud|sad",
   "face_action": "none|wink|nod_yes|spin|laugh",
   "ui_action": "none|show_card|show_weather|show_youtube",
-  "media_url": "https://رابط حقيقي أو فارغ",
-  "image_url": "https://رابط صورة حقيقي أو فارغ",
-  "media_title": "عنوان قصير أو فارغ",
+  "media_url": "الرابط أو فارغ",
+  "image_url": "الصورة أو فارغ",
+  "media_title": "العنوان أو فارغ",
   "updated_memory": {{}}
 }}"""
 
     def _clean_name(self, text: str, name: str) -> str:
-        if not name or not text or text.count(name) <= 1:
-            return text
+        if not name or not text or text.count(name) <= 1: return text
         idx = text.find(name)
         return (text[:idx+len(name)] + text[idx+len(name):].replace(name,"")).strip()
 
     def _parse(self, text: str) -> dict:
-        try:
-            return json.loads(text)
+        try: return json.loads(text)
         except Exception:
             m = re.search(r"\{.*\}", text, re.DOTALL)
             if m:
@@ -334,12 +269,6 @@ class ChatAgent:
                 except Exception: pass
         return {"reply": text.strip()[:400], "emotion": "idle", "face_action": "none"}
 
-    def _headers(self):
-        return {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}
-
-    def clear_history(self):
-        self.history.clear()
-
-    def _err(self, msg: str) -> dict:
-        return {"reply": msg, "emotion": "dizzy", "face_action": "none",
-                "ui_action": "none", "media_url": "", "image_url": "", "media_title": ""}
+    def _headers(self): return {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    def _err(self, msg: str) -> dict: return {"reply": msg, "emotion": "dizzy", "face_action": "none", "ui_action": "none"}
+    def clear_history(self): self.history.clear()
